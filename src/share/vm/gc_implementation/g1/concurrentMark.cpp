@@ -1274,7 +1274,7 @@ void ConcurrentMark::checkpointRootsFinal(bool clear_all_soft_refs) {
     return;
   }
 
-  //SvcGCMarker sgcm(SvcGCMarker::OTHER); // FIXME - why is this here? <underscore>
+  SvcGCMarker sgcm(SvcGCMarker::OTHER);
 
   if (VerifyDuringGC) {
     HandleMark hm;  // handle scope
@@ -2124,6 +2124,7 @@ void ConcurrentMark::cleanup() {
   // We need to make this be a "collection" so any collection pause that
   // races with it goes around and waits for completeCleanup to finish.
   g1h->increment_total_collections();
+  g1h->increment_total_cms();
 
   // We reclaimed old regions so we should calculate the sizes to make
   // sure we update the old gen/space data.

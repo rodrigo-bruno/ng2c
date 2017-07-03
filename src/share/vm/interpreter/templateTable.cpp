@@ -91,6 +91,11 @@ void TemplateTable::call_VM(Register oop_result, address entry_point, Register a
   _masm->call_VM(oop_result, entry_point, arg_1, arg_2, arg_3);
 }
 
+// <underscore> Added another call_VM with 4 args
+void TemplateTable::call_VM(Register oop_result, address entry_point, Register arg_1, Register arg_2, Register arg_3, Register arg_4) {
+  assert(_desc->calls_vm(), "inconsistent calls_vm information");
+  _masm->call_VM(oop_result, entry_point, arg_1, arg_2, arg_3, arg_4);
+}
 
 void TemplateTable::call_VM(Register oop_result, Register last_java_sp, address entry_point) {
   assert(_desc->calls_vm(), "inconsistent calls_vm information");
@@ -113,6 +118,12 @@ void TemplateTable::call_VM(Register oop_result, Register last_java_sp, address 
 void TemplateTable::call_VM(Register oop_result, Register last_java_sp, address entry_point, Register arg_1, Register arg_2, Register arg_3) {
   assert(_desc->calls_vm(), "inconsistent calls_vm information");
   _masm->call_VM(oop_result, last_java_sp, entry_point, arg_1, arg_2, arg_3);
+}
+
+// <underscore> Added another call_VM with 4 args
+void TemplateTable::call_VM(Register oop_result, Register last_java_sp, address entry_point, Register arg_1, Register arg_2, Register arg_3, Register arg_4) {
+  assert(_desc->calls_vm(), "inconsistent calls_vm information");
+  _masm->call_VM(oop_result, last_java_sp, entry_point, arg_1, arg_2, arg_3, arg_4);
 }
 
 

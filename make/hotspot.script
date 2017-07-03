@@ -161,6 +161,7 @@ init_gdb() {
 cd `pwd`
 handle SIGUSR1 nostop noprint
 handle SIGUSR2 nostop noprint
+handle SIGSEGV nostop noprint
 set args $JPARMS
 file $LAUNCHER
 directory $GDBSRCDIR
@@ -187,9 +188,13 @@ case "$MODE" in
 # use the new pretty GDB mode if emacs -version >= 22.1
 	case `$EMACS -version 2> /dev/null` in
 	    *GNU\ Emacs\ 2[23]*)
-	    emacs_gud_cmd="gdba"
-	    emacs_gud_args="--annotate=3"
-	    ;;
+	        emacs_gud_cmd="gdba"
+	        emacs_gud_args="--annotate=3"
+	        ;;
+            *GNU\ Emacs\ 2[4]*)
+                emacs_gud_cmd="gdb"
+                emacs_gud_args="-i=mi"
+                ;;
 	    *)
 		emacs_gud_cmd="gdb"
 		emacs_gud_args=

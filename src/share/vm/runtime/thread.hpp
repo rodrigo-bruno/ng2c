@@ -258,7 +258,40 @@ class Thread: public ThreadShadow {
   friend class ThreadLocalStorage;
   friend class GC_locker;
 
+  // <underscore>
+  // Where _tlab is used:
+  //  - tlab()
+  //  - TLAB_FIELD_OFFSET()
+  // Where tlab() is used:
+  //  - accumulate_statistics_before_gc() - build some statistical information.
+  //  - cooked_allocated_bytes() - gets the number of allocated bytes.
+  //  - resize_all_tlabs() - computes the size of new tlabs
+
+  //  - cleanup_failed_attach_current_thread() - retire thread, clean everything. - done
+  //  - exit() - calls make_parsable on tlab (retire tlab) - done
+  //  - ensure_parsability() - calls make_parsable on tlab (retire tlab)) - done
+  //  - initialize_tlab() - inits the tlab - done
+  //  - startup_initialization() - calls initialize on tlab - done
+  //  - allocate_from tlab() - allocates some object from the current tlab! - done
+  //  - allocate_from_tlab_slow() - slow allocation path. Also important! - done
+
+  // TODO - N - merge _tlab into array as well.
+  // TODO - N - change set_alloc_gen to is_alloc_gen in handles and instanceKlass
+
+  // Array of gen TLABs.
+  GrowableArray<ThreadLocalAllocBuffer*>* _tlabGenArray;
+  // The gen TLAB in use (same as indexing gen TLAB array using _alloc_gen). Used in c2.
+  ThreadLocalAllocBuffer* _genTlab;
+  // The TLAB chosen for the last allocation. Used in interpreter.
+  ThreadLocalAllocBuffer* _curTlab;
+  // The default gen tlab. This is here just to facilitate its allocation.
+  ThreadLocalAllocBuffer _tlabOld;
+  // Indicates in which gen we are currently allocating.
+  int _alloc_gen;
+  // </underscore>
+
   ThreadLocalAllocBuffer _tlab;                 // Thread-local eden
+  
   jlong _allocated_bytes;                       // Cumulative number of bytes allocated on
                                                 // the Java heap
 
@@ -429,13 +462,46 @@ class Thread: public ThreadShadow {
   GrowableArray<Metadata*>* metadata_handles() const          { return _metadata_handles; }
   void set_metadata_handles(GrowableArray<Metadata*>* handles){ _metadata_handles = handles; }
 
+  // <underscore>
+  GrowableArray<ThreadLocalAllocBuffer*>* gen_tlabs() const                { return _tlabGenArray; }
+  void set_gen_tlabs(GrowableArray<ThreadLocalAllocBuffer*>* tlabGenArray) { _tlabGenArray = tlabGenArray; }
+
+  int alloc_gen() { return _alloc_gen; }
+  void set_alloc_gen(int gen);
+
+  ThreadLocalAllocBuffer& tlab_gen() { return *_genTlab; }
+  void set_cur_tlab(bool gen_alloc)  { _curTlab = gen_alloc ? &tlab_gen() : &tlab(); }
+  ThreadLocalAllocBuffer& curr_tlab() { return *_curTlab; }
+
+  void make_gen_tlabs_parsable(bool retire_tlabs) {
+      for (int i = 0; i < _tlabGenArray->length(); i++) {
+        if (_tlabGenArray->at(i) != NULL) {
+          _tlabGenArray->at(i)->make_parsable(retire_tlabs);
+        }
+      }
+  }
+// </underscore>
+
   // Thread-Local Allocation Buffer (TLAB) support
   ThreadLocalAllocBuffer& tlab()                 { return _tlab; }
+
   void initialize_tlab() {
     if (UseTLAB) {
       tlab().initialize();
     }
   }
+
+  // <underscore>
+  void initialize_gen_tlabs() {
+    if (UseTLAB) {
+      for (int i = 0; i < _tlabGenArray->length(); i++) {
+        if (_tlabGenArray->at(i) != NULL) {
+          _tlabGenArray->at(i)->initialize();
+        }
+      }
+    }
+  }
+  // <underscore>
 
   jlong allocated_bytes()               { return _allocated_bytes; }
   void set_allocated_bytes(jlong value) { _allocated_bytes = value; }
@@ -614,7 +680,10 @@ public:
 
   static ByteSize stack_base_offset()            { return byte_offset_of(Thread, _stack_base ); }
   static ByteSize stack_size_offset()            { return byte_offset_of(Thread, _stack_size ); }
+  static ByteSize gen_tlab_offset()              { return byte_offset_of(Thread, _genTlab ); } // <underscore>
+  static ByteSize cur_tlab_offset()              { return byte_offset_of(Thread, _curTlab ); } // <underscore>
 
+  // <underscore> TODO - check if these also need to be done for the old tlab.
 #define TLAB_FIELD_OFFSET(name) \
   static ByteSize tlab_##name##_offset()         { return byte_offset_of(Thread, _tlab) + ThreadLocalAllocBuffer::name##_offset(); }
 

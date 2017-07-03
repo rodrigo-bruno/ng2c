@@ -421,6 +421,29 @@ JVM_ENTRY_NO_ENV(void, JVM_GC(void))
   }
 JVM_END
 
+// <underscore>
+JVM_ENTRY_NO_ENV(void, JVM_SetAllocGen(jint gen))
+  JVMWrapper("JVM_SetAllocGC");
+  thread->set_alloc_gen(gen);
+JVM_END
+
+JVM_ENTRY_NO_ENV(jint, JVM_GetAllocGen())
+  JVMWrapper("JVM_GetAllocGC");
+  return thread->alloc_gen();
+JVM_END
+
+JVM_ENTRY_NO_ENV(jint, JVM_NewAllocGen())
+  JVMWrapper("JVM_NewAllocGC");
+  jint gen = Universe::heap()->new_alloc_gen();
+  thread->set_alloc_gen(gen);
+  return gen;
+JVM_END
+
+JVM_ENTRY_NO_ENV(void, JVM_CollectAllocGen(jint gen))
+  JVMWrapper("JVM_CollectAllocGC");
+  Universe::heap()->collect_alloc_gen(gen);
+JVM_END
+// </underscore>
 
 JVM_LEAF(jlong, JVM_MaxObjectInspectionAge(void))
   JVMWrapper("JVM_MaxObjectInspectionAge");
@@ -566,9 +589,11 @@ JVM_ENTRY(jobject, JVM_Clone(JNIEnv* env, jobject handle))
   oop new_obj = NULL;
   if (obj->is_array()) {
     const int length = ((arrayOop)obj())->length();
-    new_obj = CollectedHeap::array_allocate(klass, size, length, CHECK_NULL);
+    // <underscore> Added default gen (zero means no gens).
+    new_obj = CollectedHeap::array_allocate(klass, 0, size, length, CHECK_NULL);
   } else {
-    new_obj = CollectedHeap::obj_allocate(klass, size, CHECK_NULL);
+    // <underscore> Added default gen (zero means no gens).
+    new_obj = CollectedHeap::obj_allocate(klass, 0, size, CHECK_NULL);
   }
   // 4839641 (4840070): We must do an oop-atomic copy, because if another thread
   // is modifying a reference field in the clonee, a non-oop-atomic copy might

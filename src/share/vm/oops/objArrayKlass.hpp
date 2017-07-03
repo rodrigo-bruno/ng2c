@@ -70,6 +70,9 @@ class ObjArrayKlass : public ArrayKlass {
 
   objArrayOop allocate(int length, TRAPS);
   oop multi_allocate(int rank, jint* sizes, TRAPS);
+  // <underscore> Alternative declarations with allocation gen.
+  objArrayOop allocate(int length, int gen, TRAPS);
+  oop multi_allocate(int rank, jint* sizes, int gen, TRAPS);
 
   // Copying
   void  copy_array(arrayOop s, int src_pos, arrayOop d, int dst_pos, int length, TRAPS);

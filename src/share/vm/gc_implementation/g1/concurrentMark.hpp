@@ -843,6 +843,8 @@ public:
     return _MARKING_VERBOSE_ && _verbose_level >= medium_verbose;
   }
   bool verbose_high() {
+    // <underscore> Just for debug! See how to enable his in a proper way.
+    // return true;
     return _MARKING_VERBOSE_ && _verbose_level >= high_verbose;
   }
 

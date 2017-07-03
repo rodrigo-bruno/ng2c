@@ -83,7 +83,10 @@ class ArrayKlass: public Klass {
   // Sizes points to the first dimension of the array, subsequent dimensions
   // are always in higher memory.  The callers of these set that up.
   virtual oop multi_allocate(int rank, jint* sizes, TRAPS);
-  objArrayOop allocate_arrayArray(int n, int length, TRAPS);
+  // <underscore> Alternative declaration (with gen argument).
+  virtual oop multi_allocate(int rank, jint* sizes, int gen, TRAPS);
+  // <underscore> Added additional argument, allocation gen.
+  objArrayOop allocate_arrayArray(int n, int length, int gen, TRAPS);
 
   // Lookup operations
   Method* uncached_lookup_method(Symbol* name, Symbol* signature) const;

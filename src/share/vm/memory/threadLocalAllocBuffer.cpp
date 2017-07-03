@@ -30,6 +30,7 @@
 #include "oops/oop.inline.hpp"
 #include "runtime/thread.inline.hpp"
 #include "utilities/copy.hpp"
+#include "gc_implementation/g1/heapRegion.hpp"
 
 // Thread-Local Edens support
 
@@ -39,6 +40,12 @@ GlobalTLABStats* ThreadLocalAllocBuffer::_global_stats   = NULL;
 
 void ThreadLocalAllocBuffer::clear_before_allocation() {
   _slow_refill_waste += (unsigned)remaining();
+// <underscore>
+#if DEBUG_TLAB_ALLOC
+  gclog_or_tty->print_cr("<underscore> ThreadLocalAllocBuffer::clear_before_allocation (start="INTPTR_FORMAT", top="INTPTR_FORMAT", end="INTPTR_FORMAT, start(), top(), end());
+#endif
+  // </undescore>
+
   make_parsable(true);   // also retire the TLAB
 }
 
@@ -107,11 +114,17 @@ void ThreadLocalAllocBuffer::make_parsable(bool retire) {
   if (end() != NULL) {
     invariants();
 
+    CollectedHeap::fill_with_object(top(), hard_end(), retire);
+
     if (retire) {
       myThread()->incr_allocated_bytes(used_bytes());
+      // <underscore>
+      if (myHeapRegion() != NULL) {
+        myHeapRegion()->del_active_tlab();
+        _my_heap_region = NULL; // <underscore>
+      }
+      // </underscore>
     }
-
-    CollectedHeap::fill_with_object(top(), hard_end(), retire);
 
     if (retire || ZeroTLAB) {  // "Reset" the TLAB
       set_start(NULL);
@@ -185,6 +198,12 @@ void ThreadLocalAllocBuffer::initialize(HeapWord* start,
   set_pf_top(top);
   set_end(end);
   invariants();
+
+  // <underscore
+#if DEBUG_TLAB_ALLOC
+  gclog_or_tty->print_cr("<underscore> ThreadLocalAllocBuffer::initialize (start="INTPTR_FORMAT", top="INTPTR_FORMAT", end="INTPTR_FORMAT, start, top, end);
+#endif
+  // </undescore>
 }
 
 void ThreadLocalAllocBuffer::initialize() {
@@ -192,6 +211,7 @@ void ThreadLocalAllocBuffer::initialize() {
              NULL,                    // top
              NULL);                   // end
 
+  _my_heap_region = NULL; // <underscore>
   set_desired_size(initial_desired_size());
 
   // Following check is needed because at startup the main (primordial)
@@ -221,6 +241,7 @@ void ThreadLocalAllocBuffer::startup_initialization() {
   // before the heap is initialized.  So reinitialize it now.
   guarantee(Thread::current()->is_Java_thread(), "tlab initialization thread not Java thread");
   Thread::current()->tlab().initialize();
+  Thread::current()->initialize_gen_tlabs(); // <underscore>
 
   if (PrintTLAB && Verbose) {
     gclog_or_tty->print("TLAB min: " SIZE_FORMAT " initial: " SIZE_FORMAT " max: " SIZE_FORMAT "\n",
@@ -302,10 +323,17 @@ void ThreadLocalAllocBuffer::verify() {
 }
 
 Thread* ThreadLocalAllocBuffer::myThread() {
-  return (Thread*)(((char *)this) +
-                   in_bytes(start_offset()) -
-                   in_bytes(Thread::tlab_start_offset()));
+  return _my_thread;
 }
+
+// <underscore>
+HeapRegion* ThreadLocalAllocBuffer::myHeapRegion() {
+  return _my_heap_region;
+}
+void ThreadLocalAllocBuffer::setHeapRegion(HeapRegion* hr) {
+  _my_heap_region = hr;
+}
+// <underscore>
 
 
 GlobalTLABStats::GlobalTLABStats() :

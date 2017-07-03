@@ -57,6 +57,14 @@ typeArrayOop oopFactory::new_typeArray(BasicType type, int length, TRAPS) {
   return result;
 }
 
+// <underscore> Alternative declaration (with gen argument).
+typeArrayOop oopFactory::new_typeArray(BasicType type, int length, int gen, TRAPS) {
+  Klass* type_asKlassOop = Universe::typeArrayKlassObj(type);
+  TypeArrayKlass* type_asArrayKlass = TypeArrayKlass::cast(type_asKlassOop);
+  typeArrayOop result = type_asArrayKlass->allocate(length, gen, THREAD);
+  return result;
+}
+
 // Create a Java array that points to metadata.
 // As far as Java code is concerned, a metaData array is either an array of
 // int or long depending on pointer size.  Only a few things use this, like
@@ -67,14 +75,25 @@ typeArrayOop oopFactory::new_metaDataArray(int length, TRAPS) {
   BasicType type = LP64_ONLY(T_LONG) NOT_LP64(T_INT);
   Klass* type_asKlassOop = Universe::typeArrayKlassObj(type);
   TypeArrayKlass* type_asArrayKlass = TypeArrayKlass::cast(type_asKlassOop);
-  typeArrayOop result = type_asArrayKlass->allocate_common(length, true, THREAD);
+  // <underscore> Added default gen value, zero.
+  typeArrayOop result = type_asArrayKlass->allocate_common(length, true, 0, THREAD);
   return result;
 }
 
 typeArrayOop oopFactory::new_typeArray_nozero(BasicType type, int length, TRAPS) {
   Klass* type_asKlassOop = Universe::typeArrayKlassObj(type);
   TypeArrayKlass* type_asArrayKlass = TypeArrayKlass::cast(type_asKlassOop);
-  typeArrayOop result = type_asArrayKlass->allocate_common(length, false, THREAD);
+  // <underscore> Added default gen value, zero.
+  typeArrayOop result = type_asArrayKlass->allocate_common(length, false, 0, THREAD);
+  return result;
+}
+
+// <underscore> Alternative declaration (with gen argument).
+typeArrayOop oopFactory::new_typeArray_nozero(BasicType type, int length, int gen, TRAPS) {
+  Klass* type_asKlassOop = Universe::typeArrayKlassObj(type);
+  TypeArrayKlass* type_asArrayKlass = TypeArrayKlass::cast(type_asKlassOop);
+  // <underscore> Added default gen value, zero.
+  typeArrayOop result = type_asArrayKlass->allocate_common(length, false, gen, THREAD);
   return result;
 }
 
@@ -82,9 +101,22 @@ typeArrayOop oopFactory::new_typeArray_nozero(BasicType type, int length, TRAPS)
 objArrayOop oopFactory::new_objArray(Klass* klass, int length, TRAPS) {
   assert(klass->is_klass(), "must be instance class");
   if (klass->oop_is_array()) {
-    return ((ArrayKlass*)klass)->allocate_arrayArray(1, length, THREAD);
+    // <underscore> Added default gen value, zero
+    return ((ArrayKlass*)klass)->allocate_arrayArray(1, length, 0, THREAD);
   } else {
     assert (klass->oop_is_instance(), "new object array with klass not an InstanceKlass");
-    return ((InstanceKlass*)klass)->allocate_objArray(1, length, THREAD);
+    // <underscore> Added default gen value, zero
+    return ((InstanceKlass*)klass)->allocate_objArray(1, length, 0, THREAD);
+  }
+}
+
+// <underscore> Alternative declaration (with gen argument).
+objArrayOop oopFactory::new_objArray(Klass* klass, int length, int gen, TRAPS) {
+  assert(klass->is_klass(), "must be instance class");
+  if (klass->oop_is_array()) {
+    return ((ArrayKlass*)klass)->allocate_arrayArray(1, length, gen, THREAD);
+  } else {
+    assert (klass->oop_is_instance(), "new object array with klass not an InstanceKlass");
+    return ((InstanceKlass*)klass)->allocate_objArray(1, length, gen, THREAD);
   }
 }

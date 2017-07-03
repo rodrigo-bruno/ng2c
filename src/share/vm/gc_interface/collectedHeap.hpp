@@ -104,6 +104,8 @@ class CollectedHeap : public CHeapObj<mtInternal> {
   uint _n_par_threads;
 
   unsigned int _total_collections;          // ... started
+  // <underscore> Number of times cms incremented _total_collections.
+  unsigned int _total_cms;
   unsigned int _total_full_collections;     // ... started
   NOT_PRODUCT(volatile size_t _promotion_failure_alot_count;)
   NOT_PRODUCT(volatile size_t _promotion_failure_alot_gc_number;)
@@ -127,6 +129,11 @@ class CollectedHeap : public CHeapObj<mtInternal> {
 
   // Create a new tlab. All TLAB allocations must go through this.
   virtual HeapWord* allocate_new_tlab(size_t size);
+  // <underscore> The new tlab will be allocated from a specific generation.
+  virtual HeapWord* allocate_new_gen_tlab(int gen, size_t size);
+  
+  // <underscore> Links the TLAB with the space where it was allocated.
+  virtual void register_tlab(ThreadLocalAllocBuffer* tlab);
 
   // Accumulate statistics on all tlabs.
   virtual void accumulate_statistics_all_tlabs();
@@ -315,10 +322,11 @@ class CollectedHeap : public CHeapObj<mtInternal> {
   // Allocate and initialize instances of Class
   static oop Class_obj_allocate(KlassHandle klass, int size, KlassHandle real_klass, TRAPS);
 
+  // <underscore> this is probably how the runtime calls the arrive at the heap for allocation!
   // General obj/array allocation facilities.
-  inline static oop obj_allocate(KlassHandle klass, int size, TRAPS);
-  inline static oop array_allocate(KlassHandle klass, int size, int length, TRAPS);
-  inline static oop array_allocate_nozero(KlassHandle klass, int size, int length, TRAPS);
+  inline static oop obj_allocate(KlassHandle klass, int gen, int size, TRAPS);
+  inline static oop array_allocate(KlassHandle klass, int gen, int size, int length, TRAPS);
+  inline static oop array_allocate_nozero(KlassHandle klass, int gen, int size, int length, TRAPS);
 
   inline static void post_allocation_install_obj_klass(KlassHandle klass,
                                                        oop obj);
@@ -327,8 +335,11 @@ class CollectedHeap : public CHeapObj<mtInternal> {
   // The obj and array allocate methods are covers for these methods.
   // mem_allocate() should never be
   // called to allocate TLABs, only individual objects.
+  // <underscore> Added gen and is_alloc_gen arguments.
   virtual HeapWord* mem_allocate(size_t size,
-                                 bool* gc_overhead_limit_was_exceeded) = 0;
+                                 bool* gc_overhead_limit_was_exceeded,
+                                 bool is_alloc_gen,
+                                 int gen) = 0;
 
   // Utilities for turning raw memory into filler objects.
   //
@@ -485,7 +496,16 @@ class CollectedHeap : public CHeapObj<mtInternal> {
   // file descriptor.
   // Only the G1GC should override this method, for now. - underscore
   virtual void send_free_regions(jint sockfd) { }
- 
+
+  // <underscore>
+  // Ask the heap to prepare a new allocation generation. Only implemented for G1.
+  virtual jint new_alloc_gen() { return -1; }
+  // Ask the heap to collect an allocation generation. Only implemented for G1.
+  virtual void collect_alloc_gen(jint gen) { }
+  // Get number of gens. Only implemented for G1.
+  virtual jint gens_length() { return 0; }
+  // </underscore>
+
   // Returns the barrier set for this heap
   BarrierSet* barrier_set() { return _barrier_set; }
 
@@ -496,6 +516,7 @@ class CollectedHeap : public CHeapObj<mtInternal> {
 
   // Total number of GC collections (started)
   unsigned int total_collections() const { return _total_collections; }
+  unsigned int total_cms() const { return _total_cms; } // <underscore>
   unsigned int total_full_collections() const { return _total_full_collections;}
 
   // Increment total number of GC collections (started)
@@ -505,6 +526,11 @@ class CollectedHeap : public CHeapObj<mtInternal> {
     if (full) {
       increment_total_full_collections();
     }
+  }
+
+  // <underscore>
+  void increment_total_cms() {
+      _total_cms++;
   }
 
   void increment_total_full_collections() { _total_full_collections++; }

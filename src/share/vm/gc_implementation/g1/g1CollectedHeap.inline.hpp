@@ -113,6 +113,26 @@ inline HeapWord* G1CollectedHeap::old_attempt_allocation(size_t word_size) {
   return result;
 }
 
+// <underscore> - inspired in attempt_allocation and old_attempt_allocation
+inline HeapWord* G1CollectedHeap::gen_attempt_allocation(int gen, size_t word_size) {
+  assert(!isHumongous(word_size), "attempt_allocation() should not "
+         "be called for humongous allocation requests");
+
+  HeapWord* result = _gen_alloc_regions->at(gen)->attempt_allocation(word_size, true /* bot_updates */);
+  if (result == NULL) {
+    // <underscore> I think this is the correct lock because it is used for young allocations.
+    MutexLocker ml(Heap_lock);
+    result = _gen_alloc_regions->at(gen)->attempt_allocation_locked(word_size, true /* bot_updates */);
+  }
+
+  if (result != NULL) {
+    MemRegion mr(result, word_size);
+    g1_barrier_set()->g1_mark_as_dirty(mr);
+  }
+  return result;
+}
+// </underscore>
+
 // It dirties the cards that cover the block so that so that the post
 // write barrier never queues anything when updating objects on this
 // block. It is assumed (and in fact we assert) that the block

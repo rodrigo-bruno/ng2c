@@ -5276,8 +5276,6 @@ jint JNICALL jni_DestroyJavaVM(JavaVM *vm) {
   JNIWrapper("DestroyJavaVM");
   JNIEnv *env;
   JavaVMAttachArgs destroyargs;
-  destroyargs.version = CurrentVersion;
-  destroyargs.name = (char *)"DestroyJavaVM";
   destroyargs.group = NULL;
   res = vm->AttachCurrentThread((void **)&env, (void *)&destroyargs);
   if (res != JNI_OK) {
@@ -5338,6 +5336,7 @@ static jint attach_current_thread(JavaVM *vm, void **penv, void *_args, bool dae
   thread->create_stack_guard_pages();
 
   thread->initialize_tlab();
+  thread->initialize_gen_tlabs(); // <underscore>
 
   thread->cache_global_variables();
 

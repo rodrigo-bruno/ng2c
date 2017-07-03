@@ -26,14 +26,15 @@
 #define SHARE_VM_GC_IMPLEMENTATION_G1_VM_OPERATIONS_G1_HPP
 
 #include "gc_implementation/shared/vmGCOperations.hpp"
+#include "g1CollectedHeap.hpp"
 
 // VM_operations for the G1 collector.
 // VM_GC_Operation:
 //   - VM_CGC_Operation
-//   - VM_G1CollectFull
+//   - VM_G1CollectFull <underscore> goes directly to full gc.
 //   - VM_G1OperationWithAllocRequest
-//     - VM_G1CollectForAllocation
-//     - VM_G1IncCollectionPause
+//     - VM_G1CollectForAllocation <underscore> tries to expand, might trigger full gc.
+//     - VM_G1IncCollectionPause   <underscore> invokes minor gc.
 
 class VM_G1OperationWithAllocRequest: public VM_GC_Operation {
 protected:
@@ -119,6 +120,23 @@ public:
   virtual const char* name() const {
     return "concurrent gc";
   }
+};
+
+// <underscore> VM operation used to clean gen TLABs and gen alloc region.
+class VM_Rebase_Gen: public VM_GC_Operation {
+private:
+  int _gen;
+public:
+  VM_Rebase_Gen(int gen) :
+    _gen(gen),
+    VM_GC_Operation(0 /* total collections,      dummy, ignored */,
+                    GCCause::_collect_gen /* GC Cause */,
+                    0 /* total full collections, dummy, ignored */,
+                    false) { }
+  void doit() {
+    G1CollectedHeap::heap()->rebase_alloc_gen(_gen);
+  }
+  VMOp_Type type() const { return VMOp_Rebase_Gen; }
 };
 
 #endif // SHARE_VM_GC_IMPLEMENTATION_G1_VM_OPERATIONS_G1_HPP

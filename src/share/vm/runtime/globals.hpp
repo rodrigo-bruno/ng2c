@@ -477,7 +477,7 @@ class CommandLineFlags {
 //
 // Note that when there is a need to support develop flags to be writeable,
 // it can be done in the same way as product_rw.
-
+// <underscore> Added product support for SafepointALot and GuaranteedSafepointInterval.
 #define RUNTIME_FLAGS(develop, develop_pd, product, product_pd, diagnostic, experimental, notproduct, manageable, product_rw, lp64_product) \
                                                                             \
   lp64_product(bool, UseCompressedOops, false,                              \
@@ -613,7 +613,7 @@ class CommandLineFlags {
           "Print out every time compilation is longer than "                \
           "a given threshold")                                              \
                                                                             \
-  develop(bool, SafepointALot, false,                                       \
+  product(bool, SafepointALot, false,                                       \
           "Generate a lot of safepoints. This works with "                  \
           "GuaranteedSafepointInterval")                                    \
                                                                             \
@@ -2891,7 +2891,7 @@ class CommandLineFlags {
           "The maximum number of lines in the stack trace for Java "        \
           "exceptions (0 means all)")                                       \
                                                                             \
-  NOT_EMBEDDED(diagnostic(intx, GuaranteedSafepointInterval, 1000,          \
+  NOT_EMBEDDED(product(intx, GuaranteedSafepointInterval, 1000,          \
           "Guarantee a safepoint (at least) every so many milliseconds "    \
           "(0 means none)"))                                                \
                                                                             \

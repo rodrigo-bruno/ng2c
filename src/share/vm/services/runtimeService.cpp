@@ -157,6 +157,8 @@ void RuntimeService::record_safepoint_end() {
     gclog_or_tty->print_cr("Total time for which application threads "
                            "were stopped: %3.7f seconds",
                            last_safepoint_time_sec());
+    // <underscore> Try to avoid log shuffling...
+    gclog_or_tty->flush();
   }
 
   // update the time stamp to begin recording app time

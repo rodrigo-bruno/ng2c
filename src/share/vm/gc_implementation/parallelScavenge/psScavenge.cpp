@@ -235,9 +235,11 @@ bool PSScavenge::invoke() {
     policy->should_full_GC(heap->old_gen()->free_in_bytes());
   bool full_gc_done = false;
   
+  /*
   gclog_or_tty->print_cr("need_full_gc ? %s scavenge_done ? %s <underscore>", 
         need_full_gc ? "T" : "F",
         scavenge_done ? "T" : "F");
+  */
 
   if (UsePerfData) {
     PSGCAdaptivePolicyCounters* const counters = heap->gc_policy_counters();
@@ -280,7 +282,7 @@ bool PSScavenge::invoke_no_policy() {
   scavenge_entry.update();
 
   if (GC_locker::check_active_before_gc()) {
-    gclog_or_tty->print_cr("check_active_before_gc -> T <underscore>");
+    //gclog_or_tty->print_cr("check_active_before_gc -> T <underscore>");
     return false;
   }
 
@@ -290,7 +292,7 @@ bool PSScavenge::invoke_no_policy() {
 
   // Check for potential problems.
   if (!should_attempt_scavenge()) {
-    gclog_or_tty->print_cr("should_attempt_scavenge -> F <underscore>");
+    //gclog_or_tty->print_cr("should_attempt_scavenge -> F <underscore>");
     return false;
   }
 
@@ -357,7 +359,7 @@ bool PSScavenge::invoke_no_policy() {
 
     // Verify no unmarked old->young roots
     if (VerifyRememberedSets) {
-      // <underscore> TODO - read, seems interesting.
+      // <underscore> OLD-TODO - read, seems interesting.
       CardTableExtension::verify_all_young_refs_imprecise();
     }
 
@@ -412,7 +414,7 @@ bool PSScavenge::invoke_no_policy() {
       ParallelScavengeHeap::ParStrongRootsScope psrs;
 
       // <underscore> the collector is adding tasks for each type of roots.
-      // <underscore> TODO - read tasks' code.
+      // <underscore> OLD-TODO - read tasks' code.
       GCTaskQueue* q = GCTaskQueue::create();
 
       if (!old_gen->object_space()->is_empty()) {
@@ -477,7 +479,7 @@ bool PSScavenge::invoke_no_policy() {
       if (reference_processor()->processing_is_mt()) {
         PSRefProcTaskExecutor task_executor;
         // <underscore> I'm not shore about what this is doing.
-        // <underscore> TODO - check later!
+        // <underscore> OLD-TODO - check later!
         reference_processor()->enqueue_discovered_references(&task_executor);
       } else {
         reference_processor()->enqueue_discovered_references(NULL);
@@ -490,7 +492,7 @@ bool PSScavenge::invoke_no_policy() {
     StringTable::unlink_or_oops_do(&_is_alive_closure, &root_closure);
 
     // Finally, flush the promotion_manager's labs, and deallocate its stacks.
-    // <underscore> TODO - check this later, seams important.
+    // <underscore> OLD-TODO - check this later, seams important.
     promotion_failure_occurred = PSPromotionManager::post_scavenge(_gc_tracer);
     if (promotion_failure_occurred) {
       clean_up_failed_promotion();
@@ -664,7 +666,7 @@ bool PSScavenge::invoke_no_policy() {
       // use imprecise verification.
       // CardTableExtension::verify_all_young_refs_precise();
       // <underscore> verify old->young cards.
-      // <underscore> TODO - read!
+      // <underscore> OLD-TODO - read!
       CardTableExtension::verify_all_young_refs_imprecise();
     }
 
@@ -719,7 +721,7 @@ bool PSScavenge::invoke_no_policy() {
 
   _gc_tracer.report_gc_end(_gc_timer.gc_end(), _gc_timer.time_partitions());
 
-  gclog_or_tty->print_cr("promotion_failure_occurred -> %s <underscore>", promotion_failure_occurred ? "T" : "F");
+  //gclog_or_tty->print_cr("promotion_failure_occurred -> %s <underscore>", promotion_failure_occurred ? "T" : "F");
   return !promotion_failure_occurred;
 }
 
@@ -793,7 +795,7 @@ bool PSScavenge::should_attempt_scavenge() {
       if (UsePerfData) {
         counters->update_scavenge_skipped(to_space_not_empty);
       }
-      gclog_or_tty->print_cr("young (to_space) empty ? F <underscore>");
+      // gclog_or_tty->print_cr("young (to_space) empty ? F <underscore>");
       return false;
     }
   }
@@ -806,8 +808,8 @@ bool PSScavenge::should_attempt_scavenge() {
   size_t avg_promoted = (size_t) policy->padded_average_promoted_in_bytes();
   size_t promotion_estimate = MIN2(avg_promoted, young_gen->used_in_bytes());
   bool result = promotion_estimate < old_gen->free_in_bytes();
-  gclog_or_tty->print_cr("promotion_estimate < old_gen->free_bytes ? %s <underscore>", 
-        result ? "T" : "F");
+  //gclog_or_tty->print_cr("promotion_estimate < old_gen->free_bytes ? %s <underscore>", 
+  //      result ? "T" : "F");
 
   if (PrintGCDetails && Verbose) {
     gclog_or_tty->print(result ? "  do scavenge: " : "  skip scavenge: ");

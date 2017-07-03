@@ -133,6 +133,8 @@ Mutex*   JfrStream_lock               = NULL;
 Mutex*   JfrThreadGroups_lock         = NULL;
 #endif
 
+Mutex*   HeapGen_lock;                // <underscore>
+
 #define MAX_NUM_MUTEX 128
 static Monitor * _mutex_array[MAX_NUM_MUTEX];
 static int _num_mutex;
@@ -196,6 +198,7 @@ void mutex_init() {
     def(MMUTracker_lock            , Mutex  , leaf     ,   true );
     def(HotCardCache_lock          , Mutex  , special  ,   true );
     def(EvacFailureStack_lock      , Mutex  , nonleaf  ,   true );
+    def(HeapGen_lock           , Mutex      , nonleaf+2  ,   true );  // <underscore>
   }
   def(ParGCRareEvent_lock          , Mutex  , leaf     ,   true );
   def(DerivedPointerTableGC_lock   , Mutex,   leaf,        true );

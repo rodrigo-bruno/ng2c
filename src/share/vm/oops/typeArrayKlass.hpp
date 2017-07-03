@@ -63,9 +63,15 @@ class TypeArrayKlass : public ArrayKlass {
   bool compute_is_subtype_of(Klass* k);
 
   // Allocation
-  typeArrayOop allocate_common(int length, bool do_zero, TRAPS);
-  typeArrayOop allocate(int length, TRAPS) { return allocate_common(length, true, THREAD); }
+  // <underscore> Added additional argument, gen.
+  typeArrayOop allocate_common(int length, bool do_zero, int gen, TRAPS);
+  // <underscore> Added default value to gen, zero.
+  typeArrayOop allocate(int length, TRAPS) { return allocate_common(length, true, 0, THREAD); }
   oop multi_allocate(int rank, jint* sizes, TRAPS);
+  // <underscore> Alternative declaration (with gen argument).
+  typeArrayOop allocate(int length, int gen, TRAPS) { return allocate_common(length, true, gen, THREAD); }
+  // <underscore> Alternative declaration (with gen argument).
+  oop multi_allocate(int rank, jint* sizes, int gen, TRAPS);
 
   oop protection_domain() const { return NULL; }
 

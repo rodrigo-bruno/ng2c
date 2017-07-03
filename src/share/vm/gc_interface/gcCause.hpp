@@ -47,6 +47,7 @@ class GCCause : public AllStatic {
     _heap_inspection,
     _heap_dump,
     _prepare_migration, /* <underscore> */
+    _collect_gen,       /* <underscore> */
 
     /* implementation independent, but reserved for GC use */
     _no_gc,

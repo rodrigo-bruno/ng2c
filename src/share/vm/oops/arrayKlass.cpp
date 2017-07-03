@@ -64,6 +64,12 @@ oop ArrayKlass::multi_allocate(int rank, jint* sizes, TRAPS) {
   return NULL;
 }
 
+// <underscore> Alternative declaration (with gen argument).
+oop ArrayKlass::multi_allocate(int rank, jint* sizes, int gen, TRAPS) {
+  ShouldNotReachHere();
+  return NULL;
+}
+
 Method* ArrayKlass::uncached_lookup_method(Symbol* name, Symbol* signature) const {
   // There are no methods in an array klass but the super class (Object) has some
   assert(super(), "super klass must be present");
@@ -124,7 +130,7 @@ klassVtable* ArrayKlass::vtable() const {
 }
 
 
-objArrayOop ArrayKlass::allocate_arrayArray(int n, int length, TRAPS) {
+objArrayOop ArrayKlass::allocate_arrayArray(int n, int length, int gen, TRAPS) {
   if (length < 0) {
     THROW_0(vmSymbols::java_lang_NegativeArraySizeException());
   }
@@ -137,7 +143,7 @@ objArrayOop ArrayKlass::allocate_arrayArray(int n, int length, TRAPS) {
   Klass* k = array_klass(n+dimension(), CHECK_0);
   ArrayKlass* ak = ArrayKlass::cast(k);
   objArrayOop o =
-    (objArrayOop)CollectedHeap::array_allocate(ak, size, length, CHECK_0);
+    (objArrayOop)CollectedHeap::array_allocate(ak, gen, size, length, CHECK_0);
   // initialization to NULL not necessary, area already cleared
   return o;
 }

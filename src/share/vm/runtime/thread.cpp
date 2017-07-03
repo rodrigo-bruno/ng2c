@@ -208,7 +208,7 @@ void Thread::operator delete(void* p) {
 // JavaThread
 
 
-Thread::Thread() {
+Thread::Thread() : _tlab(this), _tlabOld(this) {
   // stack and get_thread
   set_stack_base(NULL);
   set_stack_size(0);
@@ -221,6 +221,10 @@ Thread::Thread() {
   DEBUG_ONLY(_current_resource_mark = NULL;)
   set_handle_area(new (mtThread) HandleArea(NULL));
   set_metadata_handles(new (ResourceObj::C_HEAP, mtClass) GrowableArray<Metadata*>(30, true));
+  // <underscore> - NOTE: for some stange reason, the tlabGenArray could not be allocated further
+  // below. It would crash...
+  set_gen_tlabs(new (ResourceObj::C_HEAP, mtClass) GrowableArray<ThreadLocalAllocBuffer*>(16,true));
+  // </underscore>
   set_active_handles(NULL);
   set_free_handle_block(NULL);
   set_last_handle_mark(NULL);
@@ -250,7 +254,12 @@ Thread::Thread() {
   omFreeProvision = 32 ;
   omInUseList = NULL ;
   omInUseCount = 0 ;
-
+  // <underscore> This adds the default gen tlab.
+  gen_tlabs()->push(&_tlabOld);
+  // <underscore> This will make old gen default for gen allocations.
+  set_alloc_gen(0);
+  // <underscore> This will make eden tlab the 'last used tlab'.
+  set_cur_tlab(false);
 #ifdef ASSERT
   _visited_for_critical_count = false;
 #endif
@@ -1637,6 +1646,7 @@ JavaThread::~JavaThread() {
 void JavaThread::run() {
   // initialize thread-local alloc buffer related fields
   this->initialize_tlab();
+  this->initialize_gen_tlabs();
 
   // used to test validitity of stack trace backs
   this->record_base_of_stack_pointer();
@@ -1904,6 +1914,7 @@ void JavaThread::exit(bool destroy_vm, ExitType exit_type) {
 
   if (UseTLAB) {
     tlab().make_parsable(true);  // retire TLAB
+    make_gen_tlabs_parsable(true); // <underscore> - retire gen TLABs
   }
 
   if (JvmtiEnv::environments_might_exist()) {
@@ -1983,6 +1994,7 @@ void JavaThread::cleanup_failed_attach_current_thread() {
 
   if (UseTLAB) {
     tlab().make_parsable(true);  // retire TLAB, if any
+    make_gen_tlabs_parsable(true); // <underscore> - retire gen TLABs
   }
 
 #if INCLUDE_ALL_GCS
@@ -4671,6 +4683,32 @@ void Thread::muxRelease (volatile intptr_t * Lock)  {
   }
 }
 
+// <underscore> Implementation of set_alloc_gen.
+void Thread::set_alloc_gen(int gen) {
+
+  _alloc_gen = gen;
+  if (gen_tlabs()->length() <= gen || gen_tlabs()->at(gen) == NULL) {
+    // We need to create a new tlab for this thread.
+    MutexLockerEx ml(HeapGen_lock);
+    CollectedHeap* g1h = (CollectedHeap*) Universe::heap();
+    if (g1h->gens_length() > gen) {
+      _genTlab = new ThreadLocalAllocBuffer(this);
+      _genTlab->initialize();
+      _tlabGenArray->at_put_grow(gen, _genTlab);
+#if DEBUG_OBJ_ALLOC
+      gclog_or_tty->print_cr("<underscore> setAllocGen (gen=%d) -> %s  (created new tlab)", gen, gen ? "tlabOld" : "tlabEden");
+#endif
+    } else {
+      // Illegal tlab (it was not creeated yet!)
+    }
+  } else {
+    assert(gen_tlabs()->at(gen)->myThread() == this, "invariant");
+    _genTlab = gen_tlabs()->at(_alloc_gen);
+#if DEBUG_OBJ_ALLOC
+    gclog_or_tty->print_cr("<underscore> setAllocGen (gen=%d) -> %s is now being used ", gen, gen ? "tlabOld" : "tlabEden");
+#endif
+  }
+}
 
 void Threads::verify() {
   ALL_JAVA_THREADS(p) {

@@ -94,7 +94,7 @@ TypeArrayKlass::TypeArrayKlass(BasicType type, Symbol* name) : ArrayKlass(name) 
   set_class_loader_data(ClassLoaderData::the_null_class_loader_data());
 }
 
-typeArrayOop TypeArrayKlass::allocate_common(int length, bool do_zero, TRAPS) {
+typeArrayOop TypeArrayKlass::allocate_common(int length, bool do_zero, int gen, TRAPS) {
   assert(log2_element_size() >= 0, "bad scale");
   if (length >= 0) {
     if (length <= max_length()) {
@@ -103,9 +103,9 @@ typeArrayOop TypeArrayKlass::allocate_common(int length, bool do_zero, TRAPS) {
       typeArrayOop t;
       CollectedHeap* ch = Universe::heap();
       if (do_zero) {
-        t = (typeArrayOop)CollectedHeap::array_allocate(h_k, (int)size, length, CHECK_NULL);
+        t = (typeArrayOop)CollectedHeap::array_allocate(h_k, gen, (int)size, length, CHECK_NULL);
       } else {
-        t = (typeArrayOop)CollectedHeap::array_allocate_nozero(h_k, (int)size, length, CHECK_NULL);
+        t = (typeArrayOop)CollectedHeap::array_allocate_nozero(h_k, gen, (int)size, length, CHECK_NULL);
       }
       return t;
     } else {
@@ -123,6 +123,14 @@ oop TypeArrayKlass::multi_allocate(int rank, jint* last_size, TRAPS) {
   assert(rank == 1, "just checking");
   int length = *last_size;
   return allocate(length, THREAD);
+}
+
+// <underscore> Alternative implementation with one extra par (gen).
+oop TypeArrayKlass::multi_allocate(int rank, jint* last_size, int gen, TRAPS) {
+  // For typeArrays this is only called for the last dimension
+  assert(rank == 1, "just checking");
+  int length = *last_size;
+  return allocate(length, gen, THREAD);
 }
 
 

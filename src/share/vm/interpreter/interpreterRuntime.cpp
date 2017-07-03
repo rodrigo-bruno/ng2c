@@ -141,10 +141,99 @@ IRT_ENTRY(void, InterpreterRuntime::resolve_ldc(JavaThread* thread, Bytecodes::C
 }
 IRT_END
 
+// <underscore> Please consider reading the following file:
+// mercurial/jdk8/langtools/src/share/classes/com/sun/tools/classfile/ClassWritter.java
+// Note: bci is the value given by the runtime (new, newarray, etc).
+// n_dims is used to fix the mismatchs between the bci and the anno_bci.
+int get_alloc_gen(ConstantPool* pool, Method* method, int bci, int n_dims = 0) {
+  int alloc_gen = 0;
+  int next_centry = 0;
+  AnnotationArray* aa = method->type_annotations();
+  Array<u2>* aac = method->alloc_anno_cache();
+
+  // First, look into cache.
+  if (aac != NULL) {
+    for (; next_centry < aac->length(); next_centry++) {
+#if DEBUG_ANNO_ALLOC
+        gclog_or_tty->print_cr("<underscore> get_alloc_gen aac[%d] = %d", next_centry,  aac->at(next_centry));
+#endif
+      if (bci == aac->at(next_centry)) {
+#if DEBUG_ANNO_ALLOC
+        gclog_or_tty->print_cr("<underscore> get_alloc_gen got annotation from cache!");
+#endif
+        return 1;
+      }
+      // Note: I prefill the array with max_jushort.
+      if (aac->at(next_centry) == max_jushort) {
+        // No cache entry at 'next_centry'
+        break;
+      }
+    }
+  }
+
+  if(aa != NULL && method->alloc_anno() != NULL) {
+#if DEBUG_ANNO_ALLOC
+    gclog_or_tty->print_cr("<underscore> type annotations array length = %d: ", aa->length());
+    for (int i = 0; i < aa->length(); i++) {
+      gclog_or_tty->print(" %d ", aa->at(i));
+    }
+    gclog_or_tty->print_cr("");
+#endif
+    u1* data = aa->data();
+
+    // Get short (# of annotations)
+    u2 n_anno =Bytes::get_Java_u2(data);
+#if DEBUG_ANNO_ALLOC
+    gclog_or_tty->print_cr("<underscore> number of type annotations = %hu", n_anno);
+#endif
+    data += 2;
+    for (u2 i = 0; i < n_anno; i++) {
+      // byte target type (should be 68 == 0x44 == NEW)
+      u1 anno_target = *data;
+      // Get short (location, should be bci)
+      u2 anno_bci = Bytes::get_Java_u2(data + 1);
+      // byte loc data size (should be zero)
+      u1 dsize = *(data + 3);
+      // Note: after the previous byte comes 'dsize'*2 bytes of location data.
+      // Get short (type index in constant pool, should be Old)
+      u2 anno_type_index = Bytes::get_Java_u2(data + 4 + dsize*2);
+      // Get char* (type name, should be Ljava/lang/Gen;)
+      Symbol* type_name = pool->symbol_at(anno_type_index);
+
+      // Note: If anno_bco == bci, then they both point to the same bc. In this
+      // situation there is no need to fix the bci. Only if they differ, we
+      // should look into the size of make sure that both bcis are a match.
+      int anno_bc_len = 0;
+
+#if !ASM_ANNOTATIONS
+      for (int i = 0; i < n_dims; i++) {
+          anno_bc_len += Bytecodes::length_for(Bytecodes::code_at(method, anno_bci + anno_bc_len));
+      }
+#endif
+
+#if DEBUG_ANNO_ALLOC
+      gclog_or_tty->print_cr("<underscore> target type for annotation = %u", anno_target);
+      gclog_or_tty->print_cr("<underscore> bci = %d annotion bc index = %hu length=%d", bci, anno_bci, anno_bc_len);
+      gclog_or_tty->print_cr("<underscore> index in constant pool for type = %hu, %p", anno_type_index, type_name);
+#endif
+      if (anno_target == 68 && (anno_bci + anno_bc_len) == bci && type_name->equals("Ljava/lang/Gen;", 15)) {
+        aac->at_put(next_centry, bci); // Storing in cache.
+        alloc_gen = 1;
+#if DEBUG_ANNO_ALLOC
+        gclog_or_tty->print_cr("<underscore> object should be allocated in old gen!");
+#endif
+        break;
+      }
+      // <underscore> 8 is the number of bytes used a alloc annotation.
+      // <underscore> Note: I'm assuming the annotation has no elements!
+      data += 8 + dsize*2;
+    }
+  }
+  return alloc_gen;
+}
 
 //------------------------------------------------------------------------------------------------------------------------
 // Allocation
-
 IRT_ENTRY(void, InterpreterRuntime::_new(JavaThread* thread, ConstantPool* pool, int index))
   Klass* k_oop = pool->klass_at(index, CHECK);
   instanceKlassHandle klass (THREAD, k_oop);
@@ -154,6 +243,15 @@ IRT_ENTRY(void, InterpreterRuntime::_new(JavaThread* thread, ConstantPool* pool,
 
   // Make sure klass is initialized
   klass->initialize(CHECK);
+
+// <undescore>
+  int alloc_gen = get_alloc_gen(pool, method(thread), bci(thread));
+#if DEBUG_OBJ_ALLOC
+  gclog_or_tty->print("<underscore> InterpreterRuntime::_new(thread=%p, method=%p, bcp=%u, bci=%d)",
+          thread, method(thread), bcp(thread), bci(thread));
+  //klass->print_on(gclog_or_tty);
+#endif
+// </undescore>
 
   // At this point the class may not be fully initialized
   // because of recursive initialization. If it is fully
@@ -169,13 +267,65 @@ IRT_ENTRY(void, InterpreterRuntime::_new(JavaThread* thread, ConstantPool* pool,
   //       Java).
   //       If we have a breakpoint, then we don't rewrite
   //       because the _breakpoint bytecode would be lost.
-  oop obj = klass->allocate_instance(CHECK);
+  oop obj = klass->allocate_instance(alloc_gen, CHECK);
   thread->set_vm_result(obj);
+
+// <undescore>
+#if DEBUG_OBJ_ALLOC
+  gclog_or_tty->print("<underscore> return InterpreterRuntime::_new(thread=%p)", thread);
+  //klass->print_on(gclog_or_tty);
+#endif
+// </undescore>
+
 IRT_END
 
+  // <underscore>
+IRT_ENTRY(void, InterpreterRuntime::_get_gen_tlab(JavaThread* thread))
+  // get_alloc_gen will look into the annotaions and select the correct allocation gen
+  // 0 means young (eden); >0 means old.
+  int alloc_gen = get_alloc_gen(method(thread)->constants(), method(thread), bci(thread));
+  // set_cur_tlab will update the Thread's internal pointer to the current allocation tlab
+  thread->set_cur_tlab(alloc_gen != 0);
+#if DEBUG_OBJ_ALLOC
+  gclog_or_tty->print_cr("<underscore> InterpreterRuntime::_get_gen_tlab (pool=%p, method=%p, alloc_gen=%d, tlabGen->top %p )!",
+    method(thread)->constants(), method(thread), alloc_gen, thread->curr_tlab().top());
+#endif
 
+
+IRT_END
+// </undescore>
+
+// <underscore>
+IRT_ENTRY(void, InterpreterRuntime::_new2(JavaThread* thread, ConstantPool* pool, int index, jint gen))
+  Klass* k_oop = pool->klass_at(index, CHECK);
+#if DEBUG_OBJ_ALLOC
+  gclog_or_tty->print_cr("<underscore> InterpreterRuntime::_new2 (pool=%p, index=%d, gen=%d, tlabGen->top %p )!",
+    pool, index, gen, thread->curr_tlab().top());
+#endif
+IRT_END
+// </undescore>
+
+// <underscore>
+IRT_ENTRY(void, InterpreterRuntime::_new3(JavaThread* thread, jint gen))
+  gclog_or_tty->print("<underscore> InterpreterRuntime::_new3 (method=%p, bcp=%u, bci=%d, gen=%d, method->alloc_anno=%p)!",
+    method(thread), bcp(thread), bci(thread), gen, method(thread)->alloc_anno());
+  method(thread)->print_name(gclog_or_tty);
+  gclog_or_tty->print_cr("");
+IRT_END
+// </undescore>
+
+  
 IRT_ENTRY(void, InterpreterRuntime::newarray(JavaThread* thread, BasicType type, jint size))
-  oop obj = oopFactory::new_typeArray(type, size, CHECK);
+
+// <undescore>
+  int alloc_gen = get_alloc_gen(method(thread)->constants(), method(thread), bci(thread), 1);
+#if DEBUG_OBJ_ALLOC
+  gclog_or_tty->print_cr("<underscore> InterpreterRuntime::newarray(thread=%p, method=%p, bcp=%u, bci=%d, gen=%d, size=%d)",
+    thread, method(thread), bcp(thread), bci(thread), alloc_gen, size);
+#endif
+// </undescore>
+
+  oop obj = oopFactory::new_typeArray(type, size, alloc_gen, CHECK);
   thread->set_vm_result(obj);
 IRT_END
 
@@ -185,7 +335,16 @@ IRT_ENTRY(void, InterpreterRuntime::anewarray(JavaThread* thread, ConstantPool* 
   //       anymore after new_objArray() and no GC can happen before.
   //       (This may have to change if this code changes!)
   Klass*    klass = pool->klass_at(index, CHECK);
-  objArrayOop obj = oopFactory::new_objArray(klass, size, CHECK);
+
+// <underscore>
+  int alloc_gen = get_alloc_gen(pool, method(thread), bci(thread), 1);
+#if DEBUG_OBJ_ALLOC
+  gclog_or_tty->print_cr("<underscore> InterpreterRuntime::anewarray(thread=%p, method=%p, bcp=%u, bci=%d, gen=%d, size=%d)",
+    thread, method(thread), bcp(thread), bci(thread), alloc_gen, size);
+#endif
+// </undescore>
+
+  objArrayOop obj = oopFactory::new_objArray(klass, size, alloc_gen, CHECK);
   thread->set_vm_result(obj);
 IRT_END
 
@@ -212,7 +371,16 @@ IRT_ENTRY(void, InterpreterRuntime::multianewarray(JavaThread* thread, jint* fir
     int n = Interpreter::local_offset_in_bytes(index)/jintSize;
     dims[index] = first_size_address[n];
   }
-  oop obj = ArrayKlass::cast(klass)->multi_allocate(nof_dims, dims, CHECK);
+
+  // <underscore>
+  int alloc_gen = get_alloc_gen(constants, method(thread), bci(thread), nof_dims);
+#if DEBUG_OBJ_ALLOC
+  gclog_or_tty->print_cr("<underscore> InterpreterRuntime::multianewarray(thread=%p, method=%p, bcp=%u, bci=%d, n_dims)",
+    thread, method(thread), bcp(thread), bci(thread), nof_dims);
+#endif
+// </undescore>
+
+  oop obj = ArrayKlass::cast(klass)->multi_allocate(nof_dims, dims, alloc_gen, CHECK);
   thread->set_vm_result(obj);
 IRT_END
 

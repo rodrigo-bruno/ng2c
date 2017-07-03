@@ -39,7 +39,8 @@ inline HeapWord* G1OffsetTableContigSpace::allocate(size_t size) {
 inline HeapWord* G1OffsetTableContigSpace::par_allocate(size_t size) {
   MutexLocker x(&_par_alloc_lock);
   // Given that we take the lock no need to use par_allocate() here.
-  HeapWord* res = ContiguousSpace::allocate(size);
+  // <underscore> Changed to par_allocate (avoid locks).
+  HeapWord* res = ContiguousSpace::par_allocate(size);
   if (res != NULL) {
     _offsets.alloc_block(res, size);
   }

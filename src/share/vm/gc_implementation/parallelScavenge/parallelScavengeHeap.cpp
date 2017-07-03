@@ -279,7 +279,9 @@ bool ParallelScavengeHeap::is_in_partial_collection(const void *p) {
 // we rely on the size_policy object to force a bail out.
 HeapWord* ParallelScavengeHeap::mem_allocate(
                                      size_t size,
-                                     bool* gc_overhead_limit_was_exceeded) {
+                                     bool* gc_overhead_limit_was_exceeded,
+                                     bool is_alloc_gen,
+                                     int gen) {
   assert(!SafepointSynchronize::is_at_safepoint(), "should not be at safepoint");
   assert(Thread::current() != (Thread*)VMThread::vm_thread(), "should not be in vm thread");
   assert(!Heap_lock->owned_by_self(), "this thread should not own the Heap_lock");

@@ -730,11 +730,14 @@ class InstanceKlass: public Klass {
   }
   // allocation
   instanceOop allocate_instance(TRAPS);
+  // <underscore> Added new method that allows an allocation generation argument.
+  instanceOop allocate_instance(int alloc_gen, TRAPS);
 
   // additional member function to return a handle
   instanceHandle allocate_instance_handle(TRAPS)      { return instanceHandle(THREAD, allocate_instance(THREAD)); }
 
-  objArrayOop allocate_objArray(int n, int length, TRAPS);
+  // <underscore> Added additional argument, allocation gen.
+  objArrayOop allocate_objArray(int n, int length, int gen, TRAPS);
   // Helper function
   static instanceOop register_finalizer(instanceOop i, TRAPS);
 

@@ -1063,7 +1063,7 @@ bool InstanceKlass::is_same_or_direct_interface(Klass *k) const {
   return false;
 }
 
-objArrayOop InstanceKlass::allocate_objArray(int n, int length, TRAPS) {
+objArrayOop InstanceKlass::allocate_objArray(int n, int length, int gen, TRAPS) {
   if (length < 0) THROW_0(vmSymbols::java_lang_NegativeArraySizeException());
   if (length > arrayOopDesc::max_array_length(T_OBJECT)) {
     report_java_out_of_memory("Requested array size exceeds VM limit");
@@ -1074,7 +1074,7 @@ objArrayOop InstanceKlass::allocate_objArray(int n, int length, TRAPS) {
   Klass* ak = array_klass(n, CHECK_NULL);
   KlassHandle h_ak (THREAD, ak);
   objArrayOop o =
-    (objArrayOop)CollectedHeap::array_allocate(h_ak, size, length, CHECK_NULL);
+    (objArrayOop)CollectedHeap::array_allocate(h_ak, gen, size, length, CHECK_NULL);
   return o;
 }
 
@@ -1101,12 +1101,29 @@ instanceOop InstanceKlass::allocate_instance(TRAPS) {
 
   instanceOop i;
 
-  i = (instanceOop)CollectedHeap::obj_allocate(h_k, size, CHECK_NULL);
+  i = (instanceOop)CollectedHeap::obj_allocate(h_k, 0, size, CHECK_NULL);
   if (has_finalizer_flag && !RegisterFinalizersAtInit) {
     i = register_finalizer(i, CHECK_NULL);
   }
   return i;
 }
+
+// <underscore> Added new method that allows an allocation generation argument.
+instanceOop InstanceKlass::allocate_instance(int alloc_gen, TRAPS) {
+  bool has_finalizer_flag = has_finalizer(); // Query before possible GC
+  int size = size_helper();  // Query before forming handle.
+
+  KlassHandle h_k(THREAD, this);
+
+  instanceOop i;
+
+  i = (instanceOop)CollectedHeap::obj_allocate(h_k, alloc_gen, size, CHECK_NULL);
+  if (has_finalizer_flag && !RegisterFinalizersAtInit) {
+    i = register_finalizer(i, CHECK_NULL);
+  }
+  return i;
+}
+// </undescore>
 
 void InstanceKlass::check_valid_for_instantiation(bool throwError, TRAPS) {
   if (is_interface() || is_abstract()) {

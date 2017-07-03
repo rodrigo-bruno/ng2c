@@ -127,6 +127,8 @@ public:
 
   void verify_g1_young_region(MemRegion mr) PRODUCT_RETURN;
   void g1_mark_as_young(const MemRegion& mr);
+  void g1_mark_as_dirty(const MemRegion& mr);
+  void g1_enqueue_mr(const MemRegion& mr);
 
   bool mark_card_deferred(size_t card_index);
 

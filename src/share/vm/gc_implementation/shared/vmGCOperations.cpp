@@ -95,7 +95,8 @@ bool VM_GC_Operation::skip_operation() const {
     assert(!(skip && (_gc_cause == GCCause::_gc_locker)),
            "GC_locker cannot be active when initiating GC");
   }
-  return skip;
+  // <underscore> Force skip to false when GCCause == _collect_gen.
+  return skip && _gc_cause != GCCause::_collect_gen;
 }
 
 bool VM_GC_Operation::doit_prologue() {

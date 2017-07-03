@@ -42,7 +42,7 @@
 #include "memory/sharedHeap.hpp"
 #include "utilities/stack.hpp"
 
-#include <unistd.h> // <underscore> - needed for fd write
+#include <sys/mman.h> // <underscore> - needed for madvise
 
 // A "G1CollectedHeap" is an implementation of a java heap for HotSpot.
 // It uses the "Garbage First" heap organization and algorithm, which
@@ -187,6 +187,38 @@ public:
   : G1AllocRegion("Old GC Alloc Region", true /* bot_updates */) { }
 };
 
+// <underscore>
+class GenAllocRegion : public G1AllocRegion {
+    /* Generation identifier. */
+    int _gen;
+    /* Epoch identifier. */
+    int _epoch;
+    /* Number of regions allocated for the current epoch. */
+    int _nregions;
+protected:
+
+  virtual HeapRegion* allocate_new_region(size_t word_size, bool force);
+  virtual void retire_region(HeapRegion* alloc_region, size_t allocated_bytes);
+public:
+  // <underscore> We must force BOT updates because GenAllocRegions are not
+  // (although but it can happen) scanned by the GC when a collection takes place.
+  GenAllocRegion(int gen = 0)
+  : G1AllocRegion("Gen GC Alloc Region", true /* bot_updates */) , 
+    _gen(gen),
+    _epoch(0),
+    _nregions(0) { }
+
+  int gen() { return _gen; }
+  void set_gen(int gen) { _gen = gen; }
+  int epoch() { return _epoch; }
+  void new_epoch() { 
+      _epoch++;
+      _nregions = 0;
+  }
+  int get_n_regions() { return _nregions; }
+};
+// </underscore>
+
 // The G1 STW is alive closure.
 // An instance is embedded into the G1CH and used as the
 // (optional) _is_alive_non_header closure in the STW
@@ -209,6 +241,7 @@ class G1CollectedHeap : public SharedHeap {
   friend class MutatorAllocRegion;
   friend class SurvivorGCAllocRegion;
   friend class OldGCAllocRegion;
+  friend class GenAllocRegion;
 
   // Closures used in implementation.
   template <bool do_gen_barrier, G1Barrier barrier, bool do_mark_object>
@@ -280,23 +313,24 @@ private:
   // after heap shrinking (free_list_only == true).
   void rebuild_region_sets(bool free_list_only);
 
-  // <underscore> I could iterate this.
   // The sequence of all heap regions in the heap.
   HeapRegionSeq _hrs;
 
-  // <underscore> I can manipulate this to force the working set!
   // Alloc region used to satisfy mutator allocation requests.
   MutatorAllocRegion _mutator_alloc_region;
 
-  // <underscore> I can manipulate this to force the working set!
   // Alloc region used to satisfy allocation requests by the GC for
   // survivor objects.
   SurvivorGCAllocRegion _survivor_gc_alloc_region;
 
+  // <underscore> By default gen allocation region.
+  GenAllocRegion _gen_alloc_region;
+  // <underscore> Array of gen allocation regions.
+  GrowableArray<GenAllocRegion*>* _gen_alloc_regions;
+
   // PLAB sizing policy for survivors.
   PLABStats _survivor_plab_stats;
 
-  // <underscore> I can manipulate this to force the working set!
   // Alloc region used to satisfy allocation requests by the GC for
   // old objects.
   OldGCAllocRegion _old_gc_alloc_region;
@@ -348,6 +382,14 @@ private:
   // It does any cleanup that needs to be done on the GC alloc regions
   // before a Full GC.
   void abandon_gc_alloc_regions();
+
+  // <underscore>
+  // It resets the gen alloc regions before new allocations take place.
+  void init_gen_alloc_regions();
+
+  // It releases the gen alloc regions.
+  void release_gen_alloc_regions();
+  // </underscore>
 
   // Helper for monitoring and management support.
   G1MonitoringSupport* _g1mm;
@@ -530,6 +572,7 @@ protected:
   // NULL if unsuccessful.
   HeapWord* humongous_obj_allocate(size_t word_size);
 
+  // <underscore> Important entry points for allocation!
   // The following two methods, allocate_new_tlab() and
   // mem_allocate(), are the two main entry points from the runtime
   // into the G1's allocation routines. They have the following
@@ -561,8 +604,17 @@ protected:
 
   virtual HeapWord* allocate_new_tlab(size_t word_size);
 
+  // <underscore> allocates new tlabs in specific generation
+  virtual HeapWord* allocate_new_gen_tlab(int gen, size_t word_size);
+  
+  // <underscore> Links the TLAB with the region where it was allocated.
+  virtual void register_tlab(ThreadLocalAllocBuffer* tlab);
+
+  // <underscore> Added gen and is_gen_alloc arguments.
   virtual HeapWord* mem_allocate(size_t word_size,
-                                 bool*  gc_overhead_limit_was_exceeded);
+                                 bool*  gc_overhead_limit_was_exceeded,
+                                 bool is_alloc_gen,
+                                 int gen);
 
   // The following three methods take a gc_count_before_ret
   // parameter which is used to return the GC count if the method
@@ -622,6 +674,9 @@ protected:
   // Allocation attempt during GC for an old object / PLAB.
   inline HeapWord* old_attempt_allocation(size_t word_size);
 
+// <underscore> Allocation attempt for specific generation.
+  inline HeapWord* gen_attempt_allocation(int gen, size_t word_size);
+
   // These methods are the "callbacks" from the G1AllocRegion class.
 
   // For mutator alloc regions.
@@ -634,6 +689,11 @@ protected:
                                   GCAllocPurpose ap);
   void retire_gc_alloc_region(HeapRegion* alloc_region,
                               size_t allocated_bytes, GCAllocPurpose ap);
+
+  // For Gen alloc regions
+  HeapRegion* new_gen_alloc_region(size_t word_size, uint count);
+  void retire_gen_alloc_region(HeapRegion* alloc_region,
+                               size_t allocated_bytes);
 
   // - if explicit_gc is true, the GC is for a System.gc() or a heap
   //   inspection request and should collect the entire heap
@@ -1295,12 +1355,26 @@ public:
     return hr == _retained_old_gc_alloc_region;
   }
 
+  bool is_gen_alloc_region(HeapRegion* hr) {
+    return hr->is_gen_alloc_region();
+  }
+
   // Perform a collection of the heap; intended for use in implementing
   // "System.gc".  This probably implies as full a collection as the
   // "CollectedHeap" supports.
   virtual void collect(GCCause::Cause cause);
-  
-  
+
+  // <underscore> Getter for gen alloc regions array
+  GrowableArray<GenAllocRegion*>* gen_alloc_regions() { return _gen_alloc_regions; }
+  // <underscore> Creates a new epoch in a specific generation.
+  virtual void rebase_alloc_gen(int gen);
+  // <underscore> Creates a new generation.
+  virtual jint new_alloc_gen();
+  // <underscore> Collects a specific generation.
+  virtual void collect_alloc_gen(jint gen);
+  // <underscore> Returns the number of active gens.
+  virtual jint gens_length() { return _gen_alloc_regions->length(); }
+
     // <underscore> used to print used heap regions
     class PrintHeapRegion: public HeapRegionClosure {
         outputStream* _st;
@@ -1316,46 +1390,59 @@ public:
     
     // <underscore> used to send used heap regions
     class SendFreeRegion: public HeapRegionClosure {
-        int _sockfd;
-        int _free_pages;
-        int _nregions;
+        uint64_t _free_pages;
+        uint64_t _nregions;
+
     public:
-        SendFreeRegion(int sockfd) : _sockfd(sockfd), _free_pages(0), _nregions(0) {}
+        SendFreeRegion() : _free_pages(0), _nregions(0) {}
+
         bool doHeapRegion(HeapRegion* r) {
-            // Send if the region has at least 1 page of free space            
-            int page_size = 4*K;
-            int free_pages = (r->end() - r->top()) * sizeof(HeapWord) / page_size;
-            
+            int ret = 0;
+            uint64_t pg_sz = os::vm_page_size();
+
+            // Address of the next page (regarding top).
+            void* start = align_ptr_up((void*)r->top(), pg_sz);
+            void* end = align_ptr_down((void*) r->end(), pg_sz);
+
+            // Number of free pages between top and end.
+            uint64_t free_pages = (((uint64_t)end) - ((uint64_t) start)) / pg_sz;
+
             _free_pages += free_pages;
             _nregions++;
-            
-            gclog_or_tty->print_cr("end(" INTPTR_FORMAT ") - top(" INTPTR_FORMAT ") * sizeof(HeapWord)=%zu / page_size=%d = %d",
-                    r->end(),
-                    r->top(),
-                    sizeof(HeapWord),
-                    page_size,
-                    free_pages);
-            if(free_pages > 0) {
-                // Write pointer into socket, read poiter (uint64_t)
-                if (write(_sockfd, r->top_addr(), sizeof(HeapWord*)) < 0) {
-                    gclog_or_tty->print_cr("[SendFreeRegion] ERROR sending r->top()");
-                }
-                if (write(_sockfd, r->end_addr(), sizeof(HeapWord*)) < 0) {
-                    gclog_or_tty->print_cr("[SendFreeRegion] ERROR sending r->end()");
-                }
+
+            if (free_pages == 0) {
+                return false;
             }
+
+            ret = madvise(start, free_pages * pg_sz, MADV_DONTNEED);
+
+#if DEBUG_SEND_FREGIONS
+            gclog_or_tty->print_cr("<underscore> [G1CollectedHeap::send_free_regions] punching hole ret=%d [" INTPTR_FORMAT " - " INTPTR_FORMAT "]",
+                    ret, start, end);
+#endif
             return false;
         }
-        
-        int get_free_pages() {
+
+        uint64_t get_free_pages() {
             return _free_pages;
         }
         
-        int get_n_regions() {
+        uint64_t get_n_regions() {
             return _nregions;
         }
     };
-    
+
+    // This method asks the heap to send the free heap regions through the sock
+    // file descriptor.
+    virtual void send_free_regions(jint sockfd) {
+        SendFreeRegion sfr;
+        _hrs.iterate(&sfr);
+#if DEBUG_SEND_FREGIONS
+        gclog_or_tty->print_cr("<underscore> [G1CollectedHeap::send_free_regions] %lu free pages in %lu regions", 
+                sfr.get_free_pages(), sfr.get_n_regions());
+#endif
+    }
+
     // <underscore> - Asks the heap to prepare for migration.
     virtual void prepare_migration(jlong bandwidth) {
         gclog_or_tty->print_cr("INSIDE G1 (bandwidth=%ld)", bandwidth); // DEBUG
@@ -1380,17 +1467,6 @@ public:
         
         gclog_or_tty->print_cr("DONE G1 (bandwidth=%ld)", bandwidth);  // DEBUG
         gclog_or_tty->flush(); // DEBUG
-    }
-  
-    // This method asks the heap to send the free heap regions through the sock
-    // file descriptor.
-    virtual void send_free_regions(jint sockfd) {
-        gclog_or_tty->print_cr("INSIDE G2 (sockfd=%d)!", sockfd); //DEBUG
-        _min_migration_bandwidth = 0;
-        SendFreeRegion sfr(sockfd);
-        _hrs.iterate(&sfr); 
-        gclog_or_tty->print_cr("DONE G2 (sockfd=%d), regions=%d, free_pages=%d!", sockfd, sfr.get_n_regions(), sfr.get_free_pages()); // DEBUG
-        gclog_or_tty->flush(); //DEBUG
     }
 
   // The same as above but assume that the caller holds the Heap_lock.
@@ -1475,6 +1551,7 @@ public:
   // Iterate over all spaces in use in the heap, in ascending address order.
   virtual void space_iterate(SpaceClosure* cl);
 
+  // <underscore> This method is used to mark all regions.
   // Iterate over heap regions, in address order, terminating the
   // iteration early if the "doHeapRegion" method returns "true".
   void heap_region_iterate(HeapRegionClosure* blk) const;

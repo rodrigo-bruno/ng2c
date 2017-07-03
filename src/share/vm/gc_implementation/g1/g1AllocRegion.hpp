@@ -41,9 +41,14 @@ class ar_ext_msg;
 // and a lock will need to be taken when the active region needs to be
 // replaced.
 
-class G1AllocRegion VALUE_OBJ_CLASS_SPEC {
+// <underscore> changed the superclass to allow dynamic allocation
+//class G1AllocRegion VALUE_OBJ_CLASS_SPEC {
+class G1AllocRegion: public CHeapObj<mtGC> {
   friend class ar_ext_msg;
 
+  // <underscore> Important class. How to extended this to have an allocation 
+  // region per generation?
+  
 private:
   // The active allocating region we are currently allocating out
   // of. The invariant is that if this object is initialized (i.e.,
@@ -105,11 +110,6 @@ private:
   static void fill_up_remaining_space(HeapRegion* alloc_region,
                                       bool bot_updates);
 
-  // Retire the active allocating region. If fill_up is true then make
-  // sure that the region is full before we retire it so that noone
-  // else can allocate out of it.
-  void retire(bool fill_up);
-
   // Allocate a new active region and use it to perform a word_size
   // allocation. The force parameter will be passed on to
   // G1CollectedHeap::allocate_new_alloc_region() and tells it to try
@@ -129,6 +129,12 @@ protected:
   G1AllocRegion(const char* name, bool bot_updates);
 
 public:
+
+  // Retire the active allocating region. If fill_up is true then make
+  // sure that the region is full before we retire it so that noone
+  // else can allocate out of it.
+  void retire(bool fill_up);
+
   static void setup(G1CollectedHeap* g1h, HeapRegion* dummy_region);
 
   HeapRegion* get() const {

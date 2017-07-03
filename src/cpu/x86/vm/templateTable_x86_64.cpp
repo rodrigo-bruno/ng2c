@@ -3254,6 +3254,34 @@ void TemplateTable::_new() {
   Label initialize_header;
   Label initialize_object; // including clearing the fields
   Label allocate_shared;
+  Label young_gen;  // <underscore>
+  Label post_alloc; // <underscore>
+
+// <underscore> DEBUG block
+#if DEBUG_ASM_ALLOC
+    __ push(rsi);
+    __ push(rdx);
+    __ push(rax);
+  __ call_VM(noreg, CAST_FROM_FN_PTR(address, InterpreterRuntime::_new3), r13);
+    __ pop(rax);
+    __ pop(rdx);
+    __ pop(rsi);
+#endif
+
+
+// <underscore> DEBUG block
+#if DEBUG_ASM_ALLOC
+    __ push(rsi);
+    __ push(rdx);
+    __ push(rax);
+    __ get_constant_pool(rsi);
+    __ mov64(rdx, 0);
+    __ get_unsigned_2_byte_index_at_bcp(rax, 1);
+    __ call_VM(noreg, CAST_FROM_FN_PTR(address, InterpreterRuntime::_new2), rsi, rax, rdx);
+    __ pop(rax);
+    __ pop(rdx);
+    __ pop(rsi);
+#endif
 
   __ get_cpool_and_tags(rsi, rax);
   // Make sure the class we're about to instantiate has been resolved.
@@ -3263,6 +3291,25 @@ void TemplateTable::_new() {
   __ cmpb(Address(rax, rdx, Address::times_1, tags_offset),
           JVM_CONSTANT_Class);
   __ jcc(Assembler::notEqual, slow_case);
+
+// <underscore> DEBUG condition
+#if DEBUG_SLOWPATH_INTR
+    __ jmp(slow_case);
+#endif
+
+// <underscore> DEBUG block
+#if DEBUG_ASM_ALLOC
+    __ push(rsi);
+    __ push(rdx);
+    __ push(rax);
+    __ get_constant_pool(rsi);
+    __ mov64(rdx, 1);
+    __ get_unsigned_2_byte_index_at_bcp(rax, 1);
+    __ call_VM(noreg, CAST_FROM_FN_PTR(address, InterpreterRuntime::_new2), rsi, rax, rdx);
+    __ pop(rax);
+    __ pop(rdx);
+    __ pop(rsi);
+#endif
 
   // get InstanceKlass
   __ movptr(rsi, Address(rsi, rdx,
@@ -3275,6 +3322,21 @@ void TemplateTable::_new() {
           InstanceKlass::fully_initialized);
   __ jcc(Assembler::notEqual, slow_case);
 
+// <underscore> DEBUG block
+#if DEBUG_ASM_ALLOC
+    __ push(rsi);
+    __ push(rdx);
+    __ push(rax);
+    __ get_constant_pool(rsi);
+    __ mov64(rdx, 2);
+    __ get_unsigned_2_byte_index_at_bcp(rax, 1);
+    __ call_VM(noreg, CAST_FROM_FN_PTR(address, InterpreterRuntime::_new2), rsi, rax, rdx);
+    __ pop(rax);
+    __ pop(rdx);
+    __ pop(rsi);
+#endif
+
+
   // get instance_size in InstanceKlass (scaled to a count of bytes)
   __ movl(rdx,
           Address(rsi,
@@ -3283,21 +3345,82 @@ void TemplateTable::_new() {
   __ testl(rdx, Klass::_lh_instance_slow_path_bit);
   __ jcc(Assembler::notZero, slow_case);
 
+// <underscore> DEBUG block
+#if DEBUG_ASM_ALLOC
+    __ push(rsi);
+    __ push(rdx);
+    __ push(rax);
+    __ get_constant_pool(rsi);
+    __ mov64(rdx, 3);
+    __ get_unsigned_2_byte_index_at_bcp(rax, 1);
+    __ call_VM(noreg, CAST_FROM_FN_PTR(address, InterpreterRuntime::_new2), rsi, rax, rdx);
+    __ pop(rax);
+    __ pop(rdx);
+    __ pop(rsi);
+#endif
+
+
   // Allocate the instance
   // 1) Try to allocate in the TLAB
   // 2) if fail and the object is large allocate in the shared Eden
   // 3) if the above fails (or is not applicable), go to a slow case
   // (creates a new TLAB, etc.)
-
+  
   const bool allow_shared_alloc =
     Universe::heap()->supports_inline_contig_alloc() && !CMSIncrementalMode;
 
   if (UseTLAB) {
+    // <underscore>
+    __ get_method(rax);
+    __ cmpptr(Address(rax, in_bytes(Method::alloc_anno_offset())), (int32_t)NULL_WORD);
+    __ jcc(Assembler::equal, young_gen);
+
+    __ push(rdx); // save instance size
+    __ push(rsi); // save klass
+    // This call will update the tlabGen in current thread. rax -> method; r13 -> bcp
+    __ call_VM(noreg, CAST_FROM_FN_PTR(address, InterpreterRuntime::_get_gen_tlab));
+    __ pop(rsi);
+    __ pop(rdx);
+
+    // Load tlabGen into rcx
+    __ movptr(rcx, Address(r15_thread, in_bytes(JavaThread::cur_tlab_offset())));
+    // Load tlabGen->top into rax
+    __ movptr(rax, Address(rcx, in_bytes(ThreadLocalAllocBuffer::top_offset())));
+    // rbx = rax + rdx (instance size)
+    __ lea(rbx, Address(rax, rdx, Address::times_1));
+    // compare new top with tlabGen->end
+    __ cmpptr(rbx, Address(rcx, in_bytes(ThreadLocalAllocBuffer::end_offset())));
+    // if above -> go to slow case
+    __ jcc(Assembler::above, slow_case);
+    // else, tlabGen->top = rbx
+    __ movptr(Address(rcx, in_bytes(ThreadLocalAllocBuffer::top_offset())), rbx);
+
+// <underscore> DEBUG block
+#if DEBUG_ASM_ALLOC
+    __ push(rsi);
+    __ push(rdx);
+    __ push(rax);
+    __ get_constant_pool(rsi);
+    //__ mov64(rdx, 4);
+    __ get_unsigned_2_byte_index_at_bcp(rax, 1);
+    __ call_VM(noreg, CAST_FROM_FN_PTR(address, InterpreterRuntime::_new2), rsi, rax, rdx);
+    __ pop(rax);
+    __ pop(rdx);
+    __ pop(rsi);
+#endif
+    // <underscore>
+
+    __ jmp(post_alloc);
+    __ bind(young_gen);
+    // </underscore>
+
     __ movptr(rax, Address(r15_thread, in_bytes(JavaThread::tlab_top_offset())));
     __ lea(rbx, Address(rax, rdx, Address::times_1));
     __ cmpptr(rbx, Address(r15_thread, in_bytes(JavaThread::tlab_end_offset())));
     __ jcc(Assembler::above, allow_shared_alloc ? allocate_shared : slow_case);
     __ movptr(Address(r15_thread, in_bytes(JavaThread::tlab_top_offset())), rbx);
+
+    __ bind(post_alloc); // <underscore>
     if (ZeroTLAB) {
       // the fields have been already cleared
       __ jmp(initialize_header);
@@ -3396,6 +3519,22 @@ void TemplateTable::_new() {
 
   // slow case
   __ bind(slow_case);
+
+// <underscore> DEBUG block
+#if DEBUG_ASM_ALLOC
+   __ push(rsi);
+   __ push(rdx);
+   __ push(rax);
+  __ get_constant_pool(rsi);
+  __ mov64(rdx, 5);
+  __ get_unsigned_2_byte_index_at_bcp(rax, 1);
+   __ call_VM(noreg, CAST_FROM_FN_PTR(address, InterpreterRuntime::_new2), rsi, rax, rdx);
+   __ pop(rax);
+   __ pop(rdx);
+   __ pop(rsi);
+#endif
+
+
   __ get_constant_pool(c_rarg1);
   __ get_unsigned_2_byte_index_at_bcp(c_rarg2, 1);
   call_VM(rax, CAST_FROM_FN_PTR(address, InterpreterRuntime::_new), c_rarg1, c_rarg2);
@@ -3403,6 +3542,21 @@ void TemplateTable::_new() {
 
   // continue
   __ bind(done);
+
+// <underscore> DEBUG block
+#if DEBUG_ASM_ALLOC
+   __ push(rsi);
+   __ push(rdx);
+   __ push(rax);
+  __ get_constant_pool(rsi);
+  __ mov64(rdx, 6);
+  __ get_unsigned_2_byte_index_at_bcp(rax, 1);
+   __ call_VM(noreg, CAST_FROM_FN_PTR(address, InterpreterRuntime::_new2), rsi, rax, rdx);
+   __ pop(rax);
+   __ pop(rdx);
+   __ pop(rsi);
+#endif
+
 }
 
 void TemplateTable::newarray() {

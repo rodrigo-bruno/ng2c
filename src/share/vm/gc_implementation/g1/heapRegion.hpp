@@ -298,6 +298,16 @@ class HeapRegion: public G1OffsetTableContigSpace {
   SurvRateGroup* _surv_rate_group;
   int  _age_index;
 
+  // <underscore> The generation this region is in. -1 means no gen tracking.
+  int _gen;
+  // <underscore> The epoch of the corresponding generation. -1 means no gen
+  // tracking.
+  int _epoch;
+  // <underscore> Boolean indicating if this region is a gen alloc region.
+  volatile bool _is_gen_alloc_region;
+  // <underscore> number of active TLABs in region.
+  volatile int _active_tlabs;
+
   // The start of the unmarked area. The unmarked area extends from this
   // word until the top and/or end of the region, and is the part
   // of the region for which no marking was done, i.e. objects may
@@ -349,6 +359,30 @@ class HeapRegion: public G1OffsetTableContigSpace {
   static size_t GrainBytes;
   static size_t GrainWords;
   static size_t CardsPerRegion;
+
+  // <underscore>
+  int gen() const       { return _gen; }
+  void set_gen(int gen) { _gen = gen; }
+  
+  bool is_gen_alloc_region()                    { return _is_gen_alloc_region; }
+  void set_gen_alloc_region(bool gen_alloc_region)   { _is_gen_alloc_region = gen_alloc_region; }
+  
+  int epoch() const         { return _epoch; }
+  void set_epoch(int epoch) { _epoch = epoch; }
+  
+  int get_active_tlabs() { return _active_tlabs; }
+  void add_active_tlab() {
+      Atomic::inc(&_active_tlabs);
+  }
+  void del_active_tlab() {
+      Atomic::dec(&_active_tlabs);
+      if (_gen >= 0 && !_active_tlabs && !_is_gen_alloc_region) { enqueue_gen_cards(); }
+  }
+
+  void enqueue_gen_cards();
+  void bot_update_all();
+  // </underscore>
+
 
   static size_t align_up_to_region_byte_size(size_t sz) {
     return (sz + (size_t) GrainBytes - 1) &

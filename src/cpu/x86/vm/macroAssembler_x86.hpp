@@ -224,6 +224,11 @@ class MacroAssembler: public Assembler {
                address entry_point,
                Register arg_1, Register arg_2, Register arg_3,
                bool check_exceptions = true);
+  // <underscore>
+  void call_VM(Register oop_result,
+               address entry_point,
+               Register arg_1, Register arg_2, Register arg_3, Register arg_4,
+               bool check_exceptions = true);
 
   // Overloadings with last_Java_sp
   void call_VM(Register oop_result,
@@ -245,6 +250,12 @@ class MacroAssembler: public Assembler {
                Register last_java_sp,
                address entry_point,
                Register arg_1, Register arg_2, Register arg_3,
+               bool check_exceptions = true);
+  // <underscore>
+  void call_VM(Register oop_result,
+               Register last_java_sp,
+               address entry_point,
+               Register arg_1, Register arg_2, Register arg_3, Register arg_4,
                bool check_exceptions = true);
 
   void get_vm_result  (Register oop_result, Register thread);

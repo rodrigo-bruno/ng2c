@@ -125,12 +125,15 @@ class TemplateTable: AllStatic {
   static void call_VM(Register oop_result, address entry_point, Register arg_1);
   static void call_VM(Register oop_result, address entry_point, Register arg_1, Register arg_2);
   static void call_VM(Register oop_result, address entry_point, Register arg_1, Register arg_2, Register arg_3);
-
+  // <underscore> Added another call_VM with 4 args.
+  static void call_VM(Register oop_result, address entry_point, Register arg_1, Register arg_2, Register arg_3, Register arg_4);
   // these overloadings are not presently used on SPARC:
   static void call_VM(Register oop_result, Register last_java_sp, address entry_point);
   static void call_VM(Register oop_result, Register last_java_sp, address entry_point, Register arg_1);
   static void call_VM(Register oop_result, Register last_java_sp, address entry_point, Register arg_1, Register arg_2);
   static void call_VM(Register oop_result, Register last_java_sp, address entry_point, Register arg_1, Register arg_2, Register arg_3);
+  // <underscore> Added another call_VM with 4 args.
+  static void call_VM(Register oop_result, Register last_java_sp, address entry_point, Register arg_1, Register arg_2, Register arg_3, Register arg_4);
 
   // bytecodes
   static void nop();

@@ -284,6 +284,15 @@ class ClassFileParser VALUE_OBJ_CLASS_SPEC {
                                         int runtime_visible_annotations_length,
                                         u1* runtime_invisible_annotations,
                                         int runtime_invisible_annotations_length, TRAPS);
+  // <underscore> this method also assembles alloc annotations.
+  AnnotationArray* assemble_annotations(u1* runtime_visible_annotations,
+                                        int runtime_visible_annotations_length,
+                                        u1* runtime_alloc_annotations,
+                                        int runtime_alloc_annotations_length,
+                                        u1* runtime_invisible_annotations,
+                                        int runtime_invisible_annotations_length, TRAPS);
+  // </underscore>
+
   int skip_annotation(u1* buffer, int limit, int index);
   int skip_annotation_value(u1* buffer, int limit, int index);
   void parse_annotations(u1* buffer, int limit,
@@ -435,6 +444,8 @@ class ClassFileParser VALUE_OBJ_CLASS_SPEC {
                                int runtime_invisible_parameter_annotations_length,
                                u1* runtime_visible_type_annotations,
                                int runtime_visible_type_annotations_length,
+                               u1* runtime_alloc_type_annotations,        // <underscore>
+                               int runtime_alloc_type_annotations_length, // <underscore>
                                u1* runtime_invisible_type_annotations,
                                int runtime_invisible_type_annotations_length,
                                u1* annotation_default,

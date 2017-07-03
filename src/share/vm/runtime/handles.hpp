@@ -177,14 +177,20 @@ DEF_METADATA_HANDLE(constantPool, ConstantPool)
 // could be removed when we don't have the Klass* typedef anymore.
 class KlassHandle : public StackObj {
   Klass* _value;
+
+  // <underscore> Integer that indicates in which generation the next instance
+  // should be allocated. For now, > 0 means that the object should be allocated
+  // in a special generation (not eden).
+  int _alloc_gen;
+
  protected:
    Klass* obj() const          { return _value; }
    Klass* non_null_obj() const { assert(_value != NULL, "resolving NULL _value"); return _value; }
 
  public:
-   KlassHandle()                                 : _value(NULL) {}
-   KlassHandle(const Klass* obj)                 : _value(const_cast<Klass *>(obj)) {};
-   KlassHandle(Thread* thread, const Klass* obj) : _value(const_cast<Klass *>(obj)) {};
+   KlassHandle()                                 : _value(NULL),_alloc_gen(0) {}
+   KlassHandle(const Klass* obj)                 : _value(const_cast<Klass *>(obj)),_alloc_gen(0) {};
+   KlassHandle(Thread* thread, const Klass* obj) : _value(const_cast<Klass *>(obj)),_alloc_gen(0) {};
 
    Klass* operator () () const { return obj(); }
    Klass* operator -> () const { return non_null_obj(); }
@@ -194,6 +200,9 @@ class KlassHandle : public StackObj {
 
     bool is_null() const  { return _value == NULL; }
     bool not_null() const { return _value != NULL; }
+
+   int  alloc_gen() { return _alloc_gen; }
+   void set_alloc_gen(int alloc_gen) { _alloc_gen = alloc_gen; }
 };
 
 class instanceKlassHandle : public KlassHandle {

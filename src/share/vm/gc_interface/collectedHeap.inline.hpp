@@ -108,6 +108,7 @@ void CollectedHeap::post_allocation_setup_array(KlassHandle klass,
   post_allocation_notify(klass, (oop)obj);
 }
 
+// <underscore> alloc in tlab if UseTLAB, otherwise, use mem_allocate from heap
 HeapWord* CollectedHeap::common_mem_allocate_noinit(KlassHandle klass, size_t size, TRAPS) {
 
   // Clear unhandled oops for memory allocation.  Memory allocation might
@@ -120,6 +121,7 @@ HeapWord* CollectedHeap::common_mem_allocate_noinit(KlassHandle klass, size_t si
   }
 
   HeapWord* result = NULL;
+  // <underscore> UseTLAB is a runtime flag. It should always be on.
   if (UseTLAB) {
     result = allocate_from_tlab(klass, THREAD, size);
     if (result != NULL) {
@@ -129,8 +131,17 @@ HeapWord* CollectedHeap::common_mem_allocate_noinit(KlassHandle klass, size_t si
     }
   }
   bool gc_overhead_limit_was_exceeded = false;
+
+  // <underscore>
+#if DEBUG_OBJ_ALLOC
+  gclog_or_tty->print_cr("<underscore> CollectedHeap::common_mem_allocate_noinit (going to mem allocate) thread=%p, size="SIZE_FORMAT") ", THREAD, size);
+#endif
+  // </underscore>
+  // <underscore> Added gen and is_gen_alloc arguments.
   result = Universe::heap()->mem_allocate(size,
-                                          &gc_overhead_limit_was_exceeded);
+                                          &gc_overhead_limit_was_exceeded,
+                                          klass.alloc_gen() ? true : false,
+                                          THREAD->alloc_gen());
   if (result != NULL) {
     NOT_PRODUCT(Universe::heap()->
       check_for_non_bad_heap_word_value(result, size));
@@ -169,17 +180,30 @@ HeapWord* CollectedHeap::common_mem_allocate_noinit(KlassHandle klass, size_t si
   }
 }
 
+// <underscore> alloc, init
 HeapWord* CollectedHeap::common_mem_allocate_init(KlassHandle klass, size_t size, TRAPS) {
   HeapWord* obj = common_mem_allocate_noinit(klass, size, CHECK_NULL);
   init_obj(obj, size);
   return obj;
 }
 
+// <underscore> allocation from tlab. Introduce if to select tlab?
 HeapWord* CollectedHeap::allocate_from_tlab(KlassHandle klass, Thread* thread, size_t size) {
   assert(UseTLAB, "should use UseTLAB");
 
-  HeapWord* obj = thread->tlab().allocate(size);
+// <underscore>
+#if DEBUG_OBJ_ALLOC
+    gclog_or_tty->print_cr("<underscore> CollectedHeap::allocate_from_tlab(klass->alloc_gen=%d, thread_gen=%d, thread=%p, size="SIZE_FORMAT") ", klass.alloc_gen(), thread->alloc_gen(), thread, size);
+#endif
+
+  HeapWord* obj = klass.alloc_gen() ?
+      thread->tlab_gen().allocate(size) : thread->tlab().allocate(size);
   if (obj != NULL) {
+
+#if DEBUG_OBJ_ALLOC
+    gclog_or_tty->print_cr("<underscore> CollectedHeap::allocate_from_tlab -> obj allocated at %p", obj);
+#endif
+// </undescore>
     return obj;
   }
   // Otherwise...
@@ -194,36 +218,69 @@ void CollectedHeap::init_obj(HeapWord* obj, size_t size) {
   Copy::fill_to_aligned_words(obj + hs, size - hs);
 }
 
-oop CollectedHeap::obj_allocate(KlassHandle klass, int size, TRAPS) {
+// <underscore> Added gen parameter.
+oop CollectedHeap::obj_allocate(KlassHandle klass, int gen, int size, TRAPS) {
   debug_only(check_for_valid_allocation_state());
   assert(!Universe::heap()->is_gc_active(), "Allocation during gc not allowed");
   assert(size >= 0, "int won't convert to size_t");
+  assert(gen >= 0 && gen <= 1, "for now, gen should be 0 or 1."); // <underscore>
+
+// <underscore>
+#if DEBUG_OBJ_ALLOC
+  gclog_or_tty->print_cr("<underscore> CollectedHeap::obj_allocate(size="SIZE_FORMAT" cgen=%d) ", size, gen);
+#endif
+  klass.set_alloc_gen(gen);
+// </undescore>
+
   HeapWord* obj = common_mem_allocate_init(klass, size, CHECK_NULL);
   post_allocation_setup_obj(klass, obj);
   NOT_PRODUCT(Universe::heap()->check_for_bad_heap_word_value(obj, size));
+
   return (oop)obj;
 }
 
+// <underscore> Added gen parameter.
 oop CollectedHeap::array_allocate(KlassHandle klass,
+                                  int gen,
                                   int size,
                                   int length,
                                   TRAPS) {
   debug_only(check_for_valid_allocation_state());
   assert(!Universe::heap()->is_gc_active(), "Allocation during gc not allowed");
   assert(size >= 0, "int won't convert to size_t");
+  assert(gen >= 0 && gen <= 1, "for now, gen should be 0 or 1."); // <underscore>
+
+// <underscore>
+#if DEBUG_OBJ_ALLOC
+  gclog_or_tty->print_cr("<underscore> CollectedHeap::array_allocate(size="SIZE_FORMAT" gcen=%d length=%d) ", size, gen, length);
+#endif
+  klass.set_alloc_gen(gen);
+// </undescore>
+
   HeapWord* obj = common_mem_allocate_init(klass, size, CHECK_NULL);
   post_allocation_setup_array(klass, obj, length);
   NOT_PRODUCT(Universe::heap()->check_for_bad_heap_word_value(obj, size));
   return (oop)obj;
 }
 
+// <underscore> Added gen parameter.
 oop CollectedHeap::array_allocate_nozero(KlassHandle klass,
+                                         int gen,
                                          int size,
                                          int length,
                                          TRAPS) {
   debug_only(check_for_valid_allocation_state());
   assert(!Universe::heap()->is_gc_active(), "Allocation during gc not allowed");
   assert(size >= 0, "int won't convert to size_t");
+  assert(gen >= 0 && gen <= 1, "for now, gen should be 0 or 1."); // <underscore>
+
+// <underscore>
+#if DEBUG_OBJ_ALLOC
+  gclog_or_tty->print_cr("CollectedHeap::array_allocate_nozero(size="SIZE_FORMAT" cgen=%d length=%d) ", size, gen, length);
+#endif
+  klass.set_alloc_gen(gen);
+// </undescore>
+
   HeapWord* obj = common_mem_allocate_noinit(klass, size, CHECK_NULL);
   ((oop)obj)->set_klass_gap(0);
   post_allocation_setup_array(klass, obj, length);

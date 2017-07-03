@@ -220,6 +220,11 @@ void HeapRegion::hr_clear(bool par, bool clear_space) {
   set_young_type(NotYoung);
   reset_pre_dummy_top();
 
+  // <underscore> Doing some cleanup.
+  _epoch = -1;
+  _gen = -1;
+  _is_gen_alloc_region = false;
+
   if (!par) {
     // If this is parallel, this will be done later.
     HeapRegionRemSet* hrrs = rem_set();
@@ -236,6 +241,12 @@ void HeapRegion::hr_clear(bool par, bool clear_space) {
 void HeapRegion::par_clear() {
   assert(used() == 0, "the region should have been already cleared");
   assert(capacity() == HeapRegion::GrainBytes, "should be back to normal");
+
+  // <underscore> Doing some cleanup.
+  _epoch = -1;
+  _gen = -1;
+  _is_gen_alloc_region = false;
+
   HeapRegionRemSet* hrrs = rem_set();
   hrrs->clear();
   CardTableModRefBS* ct_bs =
@@ -358,7 +369,8 @@ HeapRegion::HeapRegion(uint hrs_index,
 #endif // ASSERT
      _young_index_in_cset(-1), _surv_rate_group(NULL), _age_index(-1),
     _rem_set(NULL), _recorded_rs_length(0), _predicted_elapsed_time_ms(0),
-    _predicted_bytes_to_copy(0)
+    _predicted_bytes_to_copy(0),
+    _active_tlabs(0), _is_gen_alloc_region(false), _gen(-1), _epoch(-1) // <underscore> Added initialization.
 {
   _rem_set = new HeapRegionRemSet(sharedOffsetArray, this);
   _orig_end = mr.end();
@@ -385,6 +397,30 @@ CompactibleSpace* HeapRegion::next_compaction_space() const {
   }
   return NULL;
 }
+
+void
+HeapRegion::enqueue_gen_cards() {
+#if NG2C_PROF_BOT_UPDATES
+  bot_update_all();
+#endif
+#if FORCE_NG2C_HR_VERIFY
+ verify();
+#endif
+  G1SATBCardTableModRefBS* ct_bs = (G1SATBCardTableModRefBS*)G1CollectedHeap::heap()->barrier_set();
+  ct_bs->g1_enqueue_mr(MemRegion(bottom(), end()));
+}
+
+void
+HeapRegion::bot_update_all() {
+  // Set in the BlockOffsetTable every object found
+  HeapWord * p = bottom();
+  while (p < end()) {
+    const size_t sz = oop(p)->size();
+    offsets()->alloc_block(p, sz);
+    p += oop(p)->size();
+  }
+}
+
 
 void HeapRegion::save_marks() {
   set_saved_mark();
@@ -489,6 +525,7 @@ oops_on_card_seq_iterate_careful(MemRegion mr,
   } else {
     assert(card_ptr == NULL, "pre-condition");
   }
+
   G1CollectedHeap* g1h = G1CollectedHeap::heap();
 
   // If we're within a stop-world GC, then we might look at a card in a
@@ -499,7 +536,10 @@ oops_on_card_seq_iterate_careful(MemRegion mr,
   } else {
     mr = mr.intersection(used_region());
   }
-  if (mr.is_empty()) return NULL;
+
+   if (mr.is_empty()) return NULL;
+
+
   // Otherwise, find the obj that extends onto mr.start().
 
   // The intersection of the incoming mr (for the card) and the
@@ -514,6 +554,9 @@ oops_on_card_seq_iterate_careful(MemRegion mr,
 
   assert(!is_young(), "check value of filter_young");
 
+  // [ng2c] Note: Gen regions should not have active TLABs
+  assert(gen() <= 0 || get_active_tlabs() == 0, "gen regions should not have active tlabs");
+
   // We can only clean the card here, after we make the decision that
   // the card is not young. And we only clean the card if we have been
   // asked to (i.e., card_ptr != NULL).
@@ -527,6 +570,11 @@ oops_on_card_seq_iterate_careful(MemRegion mr,
   HeapWord* const start = mr.start();
   HeapWord* const end = mr.end();
 
+#if DEBUG_REM_SET
+  gclog_or_tty->print_cr("[ng2c-remset] oops_on_card_seq_iterate_careful gen=%d is_alloc_gen=%d active_tlabs=%d card_ptr=%p bottom=["INTPTR_FORMAT"], top=["INTPTR_FORMAT"], end=["INTPTR_FORMAT"], mr.start=["INTPTR_FORMAT", mr.end=["INTPTR_FORMAT"] %s",
+      gen(), is_gen_alloc_region(), get_active_tlabs(), card_ptr, bottom(), top(), this->end(), start, end, gen() > 0 && get_active_tlabs() > 0 ? "avoided!" : "");
+#endif
+  
   // We used to use "block_start_careful" here.  But we're actually happy
   // to update the BOT while we do this...
   HeapWord* cur = block_start(start);
@@ -584,6 +632,7 @@ oops_on_card_seq_iterate_careful(MemRegion mr,
     }
     cur = next;
   }
+
   return NULL;
 }
 
@@ -757,9 +806,14 @@ void HeapRegion::print_on(outputStream* st) const {
   else
     st->print("   ");
   if (is_young())
-    st->print(is_survivor() ? " SU" : " Y ");
+    st->print(is_survivor() ? "   SU" : "  Y  ");
+  // <underscore>
+  else if (gen() != -1) {
+      st->print("%02d %02d", gen(), epoch());
+  }
+  // </underscore>
   else
-    st->print("   ");
+    st->print("     ");
   if (is_empty())
     st->print(" F");
   else
@@ -921,6 +975,13 @@ void HeapRegion::verify(VerifyOption vo,
   bool is_humongous = isHumongous();
   bool do_bot_verify = !is_young();
   size_t object_num = 0;
+
+#if DEBUG_REM_SET
+  if(gen() != -1) {
+    gclog_or_tty->print_cr("[ng2c-remset] HeapRegion::verify gen=%d bottom=["INTPTR_FORMAT"], top=["INTPTR_FORMAT"], end=["INTPTR_FORMAT"]", gen(), bottom(), top(), end());
+  }
+#endif
+
   while (p < top()) {
     oop obj = oop(p);
     size_t obj_size = obj->size();

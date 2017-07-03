@@ -595,7 +595,8 @@ HeapRegion* G1CollectedHeap::new_region(size_t word_size, bool do_expand) {
     // do_expand to true. So, we should only reach here during a
     // safepoint. If this assumption changes we might have to
     // reconsider the use of _expand_heap_after_alloc_failure.
-    assert(SafepointSynchronize::is_at_safepoint(), "invariant");
+    // <underscore> Added heap lock condition. We can expand from gen allocation.
+    assert(SafepointSynchronize::is_at_safepoint() || Heap_lock->owned_by_self(), "invariant");
 
     ergo_verbose1(ErgoHeapSizing,
                   "attempt heap expansion",
@@ -856,14 +857,43 @@ HeapWord* G1CollectedHeap::allocate_new_tlab(size_t word_size) {
   assert_heap_not_locked_and_not_at_safepoint();
   assert(!isHumongous(word_size), "we do not allow humongous TLABs");
 
+  // <underscore>
+#if DEBUG_TLAB_ALLOC
+  gclog_or_tty->print_cr("<underscore> G1CollectedHeap::allocate_new_tlab");
+#endif
+  // </undescore>
+
   unsigned int dummy_gc_count_before;
   int dummy_gclocker_retry_count = 0;
   return attempt_allocation(word_size, &dummy_gc_count_before, &dummy_gclocker_retry_count);
 }
 
+// <underscore>
+HeapWord* G1CollectedHeap::allocate_new_gen_tlab(int gen, size_t word_size) {
+  assert_heap_not_locked_and_not_at_safepoint();
+  assert(!isHumongous(word_size), "we do not allow humongous TLABs");
+
+#if DEBUG_TLAB_ALLOC
+  gclog_or_tty->print_cr("<underscore> G1CollectedHeap::allocate_new_gen_tlab");
+#endif
+
+  return gen_attempt_allocation(gen, word_size);
+}
+
+void G1CollectedHeap::register_tlab(ThreadLocalAllocBuffer* tlab) {
+    HeapRegion* hr = heap_region_containing_raw(tlab->start());
+    assert(hr != NULL, "TLAB should be covered by one region.");
+    tlab->setHeapRegion(hr);
+    hr->add_active_tlab();
+}
+// </undescore>
+
+// <underscore> Added gen and is_alloc_gen arguments.
 HeapWord*
 G1CollectedHeap::mem_allocate(size_t word_size,
-                              bool*  gc_overhead_limit_was_exceeded) {
+                              bool*  gc_overhead_limit_was_exceeded,
+                              bool is_alloc_gen,
+                              int gen) {
   assert_heap_not_locked_and_not_at_safepoint();
 
   // Loop until the allocation is satisfied, or unsatisfied after GC.
@@ -872,13 +902,29 @@ G1CollectedHeap::mem_allocate(size_t word_size,
 
     HeapWord* result = NULL;
     if (!isHumongous(word_size)) {
-      result = attempt_allocation(word_size, &gc_count_before, &gclocker_retry_count);
+      // <underscore>
+#if DEBUG_LARGE_OBJ_ALLOC
+      gclog_or_tty->print_cr("<underscore> CollectedHeap::mem_allocate (going directly to alloc region) is_alloc_gen=%d, word_size="SIZE_FORMAT") ", is_alloc_gen, word_size);
+#endif
+      // </underscore>
+      // <underscore> Added the gen test.
+      result = is_alloc_gen ?
+          gen_attempt_allocation(gen, word_size) :
+          attempt_allocation(word_size, &gc_count_before, &gclocker_retry_count);
     } else {
+      // <underscore>
+#if DEBUG_LARGE_OBJ_ALLOC
+      gclog_or_tty->print_cr("<underscore> CollectedHeap::mem_allocate (going to humongous) is_alloc_gen=%d, size="SIZE_FORMAT") ", is_alloc_gen, word_size);
+#endif
+      // </underscore>
       result = attempt_allocation_humongous(word_size, &gc_count_before, &gclocker_retry_count);
     }
     if (result != NULL) {
       return result;
     }
+
+    // <underscore> Assert to indicate if we need to consider this scenario.
+    assert(!is_alloc_gen, "Gen allocations should not need to start a GC!");
 
     // Create the garbage collection operation...
     VM_G1CollectForAllocation op(gc_count_before, word_size);
@@ -1346,8 +1392,8 @@ bool G1CollectedHeap::do_collection(bool explicit_gc,
       gc_prologue(true);
       increment_total_collections(true /* full gc */);
       increment_old_marking_cycles_started();
-
-      assert(used() == recalculate_used(), "Should be equal");
+      // <underscore> TODO - Fix his!
+      //assert(used() == recalculate_used(), "Should be equal");
 
       verify_before_gc();
 
@@ -1369,6 +1415,8 @@ bool G1CollectedHeap::do_collection(bool explicit_gc,
       // Make sure we'll choose a new allocation region afterwards.
       release_mutator_alloc_region();
       abandon_gc_alloc_regions();
+      release_gen_alloc_regions(); // <underscore>
+
       g1_rem_set()->cleanupHRRS();
 
       // We should call this after we retire any currently active alloc
@@ -1534,6 +1582,7 @@ bool G1CollectedHeap::do_collection(bool explicit_gc,
       clear_cset_fast_test();
 
       init_mutator_alloc_region();
+      init_gen_alloc_regions(); // <underscore>
 
       double end = os::elapsedTime();
       g1_policy()->record_full_collection_end();
@@ -1944,7 +1993,10 @@ G1CollectedHeap::G1CollectedHeap(G1CollectorPolicy* policy_) :
   _old_set("Old Set"),
   _humongous_set("Master Humongous Set"),
   _free_regions_coming(false),
-  _min_migration_bandwidth(0), // <underscore> added initialization.
+  // <underscore> added initialization.
+  _min_migration_bandwidth(0),
+  // <underscore> added initialization.
+  _gen_alloc_regions(new (ResourceObj::C_HEAP, mtGC) GrowableArray<GenAllocRegion*>(16,true)),
   _young_list(new YoungList(this)),
   _gc_time_stamp(0),
   _retained_old_gc_alloc_region(NULL),
@@ -1995,9 +2047,8 @@ G1CollectedHeap::G1CollectedHeap(G1CollectorPolicy* policy_) :
 
   guarantee(_task_queues != NULL, "task_queues allocation failure.");
   
-  /* <underscore> */
-  gclog_or_tty->print("<underscore> G1CollectedHeap at %p \n", heap());
-  /* </underscore> */
+  // <underscore>
+  _gen_alloc_regions->push(&_gen_alloc_region);
 }
 
 jint G1CollectedHeap::initialize() {
@@ -2193,6 +2244,7 @@ jint G1CollectedHeap::initialize() {
   G1AllocRegion::setup(this, dummy_region);
 
   init_mutator_alloc_region();
+  init_gen_alloc_regions(); // <underscore>
 
   // Do create of the monitoring and management support so that
   // values in the heap have been properly initialized.
@@ -2363,6 +2415,16 @@ size_t G1CollectedHeap::used() const {
   HeapRegion* hr = _mutator_alloc_region.get();
   if (hr != NULL)
     result += hr->used();
+
+  // <underscore> Add from all active gen alloc regions.
+  for (int i = 0; i < _gen_alloc_regions->length(); i++) {
+    hr = _gen_alloc_regions->at(i)->get();
+    if (hr != NULL) {
+      result += hr->used();
+    }
+  }
+  // </underscore>
+
   return result;
 }
 
@@ -2415,6 +2477,7 @@ bool G1CollectedHeap::should_do_concurrent_full_gc(GCCause::Cause cause) {
     case GCCause::_java_lang_system_gc:     return ExplicitGCInvokesConcurrent;
     case GCCause::_g1_humongous_allocation: return true;
     case GCCause::_prepare_migration:       return false;
+    case GCCause::_collect_gen:             return true; // <underscore> force concurrent mark.
     default:                                return false;
   }
 }
@@ -3723,6 +3786,8 @@ void G1CollectedHeap::gc_epilogue(bool full /* Ignored */) {
   Universe::update_heap_info_at_gc();
 }
 
+// <underscore> Normal way of scheduling a minor GC (this is called from allocate
+// slow).
 HeapWord* G1CollectedHeap::do_collection_pause(size_t word_size,
                                                unsigned int gc_count_before,
                                                bool* succeeded,
@@ -3922,6 +3987,11 @@ G1CollectedHeap::do_collection_pause_at_safepoint(double target_pause_time_ms) {
   verify_region_sets_optional();
   verify_dirty_young_regions();
 
+#if DEBUG_MINOR_CC
+  gclog_or_tty->print_cr("<underscore> minor gc: type= %s",
+    g1_policy()->gcs_are_young() ? "young" : "mixed");
+#endif
+
   // This call will decide whether this pause is an initial-mark
   // pause. If it is, during_initial_mark_pause() will return true
   // for the duration of this pause.
@@ -3983,7 +4053,7 @@ G1CollectedHeap::do_collection_pause_at_safepoint(double target_pause_time_ms) {
 
     { // Call to jvmpi::post_class_unload_events must occur outside of active GC
       IsGCActiveMark x;
-
+ 
       gc_prologue(false);
       increment_total_collections(false /* full gc */);
       increment_gc_time_stamp();
@@ -4010,6 +4080,9 @@ G1CollectedHeap::do_collection_pause_at_safepoint(double target_pause_time_ms) {
         // Forget the current alloc region (we might even choose it to be part
         // of the collection set!).
         release_mutator_alloc_region();
+        // <underscore> This is just conservative measure. In future, if we
+        // realize that this is not necessary, we can relax this.
+        release_gen_alloc_regions();
 
         // We should call this after we retire the mutator alloc
         // region(s) so that all the ALLOC / RETIRE events are generated
@@ -4069,30 +4142,16 @@ G1CollectedHeap::do_collection_pause_at_safepoint(double target_pause_time_ms) {
                                                    evacuation_info);
         }
         else {
+          // <underscore> Chech how to put only gen regions in the CSet.
           g1_policy()->finalize_cset(target_pause_time_ms, evacuation_info);
         }
         // </underscore>
 
-        /* <underscore>  THIS CODE IS BUGGY!
-        {
-          HeapRegion* r = g1_policy()->collection_set();
-          r->calc_gc_efficiency();
-          double gc_efficiency = r->gc_efficiency();
-          int hcount = 1;
-          gclog_or_tty->print("\n");
-          while (r != NULL) {
-            r->calc_gc_efficiency();
-            gc_efficiency = r->gc_efficiency();
-            HeapRegion* next = r->next_in_collection_set();
-            if(!r->is_young()) {
-              gclog_or_tty->print("\t%u (%s,%zu,%f)", r->hrs_index(), r->is_young() ? "Y" : "O", r->reclaimable_bytes(), r->gc_efficiency());
-            }
-            hcount++;
-            r = next;
-          }
-          gclog_or_tty->print("\n%d regions to collect. Min efficiency %f. ", hcount, gc_efficiency);
-        }
-         </underscore> */
+// <underscore>
+#if DEBUG_PRINT_REGIONS
+        print_extended_on(gclog_or_tty);
+#endif
+// </underscore>
         
         _cm->note_start_of_gc();
         // We should not verify the per-thread SATB buffers given that
@@ -4210,6 +4269,9 @@ G1CollectedHeap::do_collection_pause_at_safepoint(double target_pause_time_ms) {
 #endif // YOUNG_LIST_VERBOSE
 
         init_mutator_alloc_region();
+
+        // <underscore> Now its time to initialize gen alloc regions.
+        init_gen_alloc_regions();
 
         {
           size_t expand_bytes = g1_policy()->expansion_amount();
@@ -4428,6 +4490,33 @@ void G1CollectedHeap::abandon_gc_alloc_regions() {
   assert(_old_gc_alloc_region.get() == NULL, "pre-condition");
   _retained_old_gc_alloc_region = NULL;
 }
+
+// <underscore>
+void G1CollectedHeap::init_gen_alloc_regions() {
+  for (int i = 0; i < _gen_alloc_regions->length(); i++) {
+    assert(_gen_alloc_regions->at(i)->get() == NULL, "pre-condition");
+    _gen_alloc_regions->at(i)->init();
+  }
+}
+
+void G1CollectedHeap::release_gen_alloc_regions() {
+#if DEBUG_ALLOC_REGION
+  gclog_or_tty->print_cr("<underscore> [G1CollectedHeap::release_gen_alloc_regions] releasing gen alloc regions");
+#endif
+
+  for (int i = 0; i < _gen_alloc_regions->length(); i++) {
+    // <underscore> release calls retire if region is gen alloc.
+#if DEBUG_ALLOC_REGION
+  gclog_or_tty->print_cr("<underscore> [G1CollectedHeap::release_gen_alloc_regions] releasing gen alloc region %i", i);
+#endif
+    _gen_alloc_regions->at(i)->release();
+    assert(_gen_alloc_regions->at(i)->get() == NULL, "post-condition");
+  }
+#if DEBUG_ALLOC_REGION
+  gclog_or_tty->print_cr("<underscore> [G1CollectedHeap::release_gen_alloc_regions] releasing gen alloc regions => Done");
+#endif
+}
+// </undersore>
 
 void G1CollectedHeap::init_for_evac_failure(OopsInHeapRegionClosure* cl) {
   _drain_in_progress = false;
@@ -4759,16 +4848,26 @@ void G1ParCopyClosure<do_gen_barrier, barrier, do_mark_object>
 template <bool do_gen_barrier, G1Barrier barrier, bool do_mark_object>
 oop G1ParCopyClosure<do_gen_barrier, barrier, do_mark_object>
   ::copy_to_survivor_space(oop old) {
-  size_t word_sz = old->size();
   HeapRegion* from_region = _g1->heap_region_containing_raw(old);
+#if DEBUG_REM_SET
+  gclog_or_tty->print_cr("<underscore> G1ParCopyClosure::copy_to_survivor_space region bottom=["INTPTR_FORMAT"] top=["INTPTR_FORMAT"] end=["INTPTR_FORMAT"]",
+    from_region->bottom(), from_region->top(), from_region->end());
+#endif
+  size_t word_sz = old->size();
+
   // +1 to make the -1 indexes valid...
   int       young_index = from_region->young_index_in_cset()+1;
   assert( (from_region->is_young() && young_index >  0) ||
          (!from_region->is_young() && young_index == 0), "invariant" );
   G1CollectorPolicy* g1p = _g1->g1_policy();
   markOop m = old->mark();
+#if DEBUG_SURVIVORS
+  old->print_on(gclog_or_tty);
+#endif
+  // </underscore>
   int age = m->has_displaced_mark_helper() ? m->displaced_mark_helper()->age()
                                            : m->age();
+  // <underscore> AHAHHH! This is where it decides where the object is copied.
   GCAllocPurpose alloc_purpose = g1p->evacuation_destination(from_region, age,
                                                              word_sz);
   HeapWord* obj_ptr = _par_scan_state->allocate(alloc_purpose, word_sz);
@@ -6360,10 +6459,12 @@ bool G1CollectedHeap::check_young_list_empty(bool check_heap, bool check_sample)
 
 class TearDownRegionSetsClosure : public HeapRegionClosure {
 private:
+  G1CollectedHeap* _g1h; // <underscore>
   OldRegionSet *_old_set;
 
 public:
-  TearDownRegionSetsClosure(OldRegionSet* old_set) : _old_set(old_set) { }
+  TearDownRegionSetsClosure(G1CollectedHeap* g1h, OldRegionSet* old_set) : 
+      _g1h(g1h), _old_set(old_set) { }
 
   bool doHeapRegion(HeapRegion* r) {
     if (r->is_empty()) {
@@ -6373,7 +6474,18 @@ public:
     } else if (r->isHumongous()) {
       // We ignore humongous regions, we're not tearing down the
       // humongous region set
-    } else {
+    }
+    // <underscore>
+    else if (_g1h->is_gen_alloc_region(r)) {
+      //The current gen alloc region does not belong to any set.
+    }
+    // </underscore>
+    else {
+      // <underscore> Reset the gens and epochs.
+      if (r->epoch() != -1 || r->gen() != -1) {
+        r->set_epoch(-1);
+        r->set_gen(-1);
+      }
       // The rest should be old
       _old_set->remove(r);
     }
@@ -6389,7 +6501,8 @@ void G1CollectedHeap::tear_down_region_sets(bool free_list_only) {
   assert_at_safepoint(true /* should_be_vm_thread */);
 
   if (!free_list_only) {
-    TearDownRegionSetsClosure cl(&_old_set);
+    // <underscore> Added _g1h.
+    TearDownRegionSetsClosure cl(_g1h, &_old_set);
     heap_region_iterate(&cl);
 
     // Need to do this after the heap iteration to be able to
@@ -6401,14 +6514,16 @@ void G1CollectedHeap::tear_down_region_sets(bool free_list_only) {
 
 class RebuildRegionSetsClosure : public HeapRegionClosure {
 private:
+  G1CollectedHeap* _g1h; // <underscore>
   bool            _free_list_only;
   OldRegionSet*   _old_set;
   FreeRegionList* _free_list;
   size_t          _total_used;
 
 public:
-  RebuildRegionSetsClosure(bool free_list_only,
+  RebuildRegionSetsClosure(G1CollectedHeap* g1h, bool free_list_only,
                            OldRegionSet* old_set, FreeRegionList* free_list) :
+    _g1h(g1h),
     _free_list_only(free_list_only),
     _old_set(old_set), _free_list(free_list), _total_used(0) {
     assert(_free_list->is_empty(), "pre-condition");
@@ -6427,10 +6542,15 @@ public:
       _free_list->add_as_tail(r);
     } else if (!_free_list_only) {
       assert(!r->is_young(), "we should not come across young regions");
-
       if (r->isHumongous()) {
         // We ignore humongous regions, we left the humongous set unchanged
-      } else {
+      }
+      // <underscore>
+      else if (_g1h->is_gen_alloc_region(r)) {
+        // Ignore, we do not want it to be added to the old gen.
+      }
+      // </underscore>
+      else {
         // The rest should be old, add them to the old set
         _old_set->add(r);
       }
@@ -6448,7 +6568,7 @@ public:
 void G1CollectedHeap::rebuild_region_sets(bool free_list_only) {
   assert_at_safepoint(true /* should_be_vm_thread */);
 
-  RebuildRegionSetsClosure cl(free_list_only, &_old_set, &_free_list);
+  RebuildRegionSetsClosure cl(_g1h, free_list_only, &_old_set, &_free_list);
   heap_region_iterate(&cl);
 
   if (!free_list_only) {
@@ -6541,8 +6661,7 @@ HeapRegion* G1CollectedHeap::new_gc_alloc_region(size_t word_size,
   assert(FreeList_lock->owned_by_self(), "pre-condition");
 
   if (count < g1_policy()->max_regions(ap)) {
-    HeapRegion* new_alloc_region = new_region(word_size,
-                                              true /* do_expand */);
+    HeapRegion* new_alloc_region = new_region(word_size, true /* do_expand */);
     if (new_alloc_region != NULL) {
       // We really only need to do this for old regions given that we
       // should never scan survivors. But it doesn't hurt to do it
@@ -6578,6 +6697,44 @@ void G1CollectedHeap::retire_gc_alloc_region(HeapRegion* alloc_region,
   _hr_printer.retire(alloc_region);
 }
 
+// <underscore>
+// Methods for the Gen alloc regions
+HeapRegion* G1CollectedHeap::new_gen_alloc_region(size_t word_size,
+                                                 uint count) {
+  assert(Heap_lock->owned_by_self(), "pre-condition");
+
+  // <underscore> using 'GCAllocForTenured' forces unlimited max regions
+  if (count < g1_policy()->max_regions(GCAllocForTenured)) {
+    HeapRegion* new_alloc_region = new_region(word_size, true /* do_expand */);
+    assert(new_alloc_region != NULL, "New gen alloc regions should always succeed.");
+    // <underscore> TODO - if we fail to expand. We might want to try a GC?
+    if (new_alloc_region != NULL) {
+      // We really only need to do this for old regions given that we
+      // should never scan survivors. But it doesn't hurt to do it
+      // for survivors too.
+      new_alloc_region->set_saved_mark();
+      _hr_printer.alloc(new_alloc_region, G1HRPrinter::Old);
+      return new_alloc_region;
+    } else {
+      // <underscore> Note: we will always be allowed more regions
+      // g1_policy()->note_alloc_region_limit_reached(ap);
+      ;
+    }
+  }
+  return NULL;
+}
+
+void G1CollectedHeap::retire_gen_alloc_region(HeapRegion* alloc_region,
+                                             size_t allocated_bytes) {
+  //_summary_bytes_used += allocated_bytes;
+  // <underscore> TODO - check if this is correct. Check if mutator alloc region
+  // retirement calls fill before.
+  _summary_bytes_used += alloc_region->used();
+  _old_set.add(alloc_region);
+  _hr_printer.retire(alloc_region);
+}
+// </underscore>
+
 HeapRegion* SurvivorGCAllocRegion::allocate_new_region(size_t word_size,
                                                        bool force) {
   assert(!force, "not supported for GC alloc regions");
@@ -6601,26 +6758,73 @@ void OldGCAllocRegion::retire_region(HeapRegion* alloc_region,
   _g1h->retire_gc_alloc_region(alloc_region, allocated_bytes,
                                GCAllocForTenured);
 }
+
+// <underscore>
+HeapRegion* GenAllocRegion::allocate_new_region(size_t word_size,
+                                                  bool force) {
+  assert(!force, "not supported for Gen alloc regions");
+  HeapRegion* region = _g1h->new_gen_alloc_region(word_size, count());
+  assert(region != NULL, "New gen alloc regions shouldn't return NULL.");
+  region->set_gen(this->_gen);
+  region->set_gen_alloc_region(true);
+  region->set_epoch(this->_epoch);
+  _nregions++;
+#if DEBUG_ALLOC_REGION
+  gclog_or_tty->print_cr("<underscore> [GenAllocRegion::allocate_new_region] gen=%d, this=["INTPTR_FORMAT"], bottom=["INTPTR_FORMAT"]",
+    this->gen(), this, region->bottom());
+#endif
+  return region;
+}
+
+void GenAllocRegion::retire_region(HeapRegion* alloc_region,
+                                     size_t allocated_bytes) {
+  _g1h->retire_gen_alloc_region(alloc_region, allocated_bytes);
+  alloc_region->set_gen_alloc_region(false);
+  if (!alloc_region->get_active_tlabs()) {
+#if NG2C_PROF_BOT_UPDATES
+    alloc_region->bot_update_all();
+#endif
+#if FORCE_NG2C_HR_VERIFY
+    alloc_region->verify();
+#endif
+    G1SATBCardTableModRefBS* ct_bs = (G1SATBCardTableModRefBS*)G1CollectedHeap::heap()->barrier_set();
+    ct_bs->g1_enqueue_mr(MemRegion(alloc_region->bottom(), alloc_region->end()));
+  }
+#if DEBUG_ALLOC_REGION
+  gclog_or_tty->print_cr("<underscore> [GenAllocRegion::retire_region] gen=%d, ttgc=%d, this=["INTPTR_FORMAT"], bottom=["INTPTR_FORMAT"]",
+    this->gen(), alloc_region->retired_gc_count(), this, alloc_region->bottom());
+#endif
+}
+// </underscore>
+
 // Heap region set verification
 
 class VerifyRegionListsClosure : public HeapRegionClosure {
 private:
+// <underscore> Added this field and filled it in the constructor.
+  G1CollectedHeap*    _g1h;
   FreeRegionList*     _free_list;
   OldRegionSet*       _old_set;
   HumongousRegionSet* _humongous_set;
   uint                _region_count;
 
 public:
-  VerifyRegionListsClosure(OldRegionSet* old_set,
+  VerifyRegionListsClosure(G1CollectedHeap* g1h,
+                           OldRegionSet* old_set,
                            HumongousRegionSet* humongous_set,
                            FreeRegionList* free_list) :
-    _old_set(old_set), _humongous_set(humongous_set),
+    _g1h(g1h), _old_set(old_set), _humongous_set(humongous_set),
     _free_list(free_list), _region_count(0) { }
 
   uint region_count() { return _region_count; }
 
   bool doHeapRegion(HeapRegion* hr) {
     _region_count += 1;
+
+    // <underscore> debug only
+#if DEBUG_PRINT_REGIONS
+    hr->print_on(gclog_or_tty);
+#endif
 
     if (hr->continuesHumongous()) {
       return false;
@@ -6632,7 +6836,13 @@ public:
       _humongous_set->verify_next_region(hr);
     } else if (hr->is_empty()) {
       _free_list->verify_next_region(hr);
-    } else {
+    }
+    // <underscore>
+    else if (_g1h->is_gen_alloc_region(hr)) {
+      // The current gen alloc region does not belong to any set.
+    }
+    // </underscore>
+    else {
       _old_set->verify_next_region(hr);
     }
     return false;
@@ -6688,7 +6898,8 @@ void G1CollectedHeap::verify_region_sets() {
   _humongous_set.verify_start();
   _free_list.verify_start();
 
-  VerifyRegionListsClosure cl(&_old_set, &_humongous_set, &_free_list);
+  // <underscore> Added _g1h to cl.
+  VerifyRegionListsClosure cl(_g1h, &_old_set, &_humongous_set, &_free_list);
   heap_region_iterate(&cl);
 
   _old_set.verify_end();
@@ -6917,3 +7128,100 @@ void G1CollectedHeap::rebuild_strong_code_roots() {
   RebuildStrongCodeRootClosure blob_cl(this);
   CodeCache::blobs_do(&blob_cl);
 }
+
+// <underscore> Thread closure to release threads TLAB.
+// <underscore> NOTE: This must be called inside a safepoint.
+class ThreadCollectGenClosure: public ThreadClosure {
+private:
+  int _gen;
+public:
+  ThreadCollectGenClosure(int gen) : _gen(gen) { }
+
+  virtual void do_thread(Thread* thread) {
+    GrowableArray<ThreadLocalAllocBuffer*>* gen_tlabs = thread->gen_tlabs();
+    if (gen_tlabs->length() > _gen && gen_tlabs->at(_gen) != NULL) {
+      gen_tlabs->at(_gen)->make_parsable(true);
+      // <underscore> TODO - change make_parsable to clear_before_allocation
+    }
+  }
+};
+
+// <underscore> This is only called through collect_alloc_gen. Therefore, we will
+// never have a race here (because collect_alloc_gen is synchronized).
+void G1CollectedHeap::rebase_alloc_gen(int gen) {
+  assert_at_safepoint(true /* should_be_vm_thread */);
+
+#if DEBUG_COLLECT_GEN
+    gclog_or_tty->print_cr("<underscore> collect_alloc_gen: rebasing gen %d", gen);
+#endif
+
+  // Note: inside a safepoint, the threads' lock is already taking by us.
+  ThreadCollectGenClosure tc(gen);
+  for (JavaThread *thread = Threads::first(); thread; thread = thread->next()) {
+    tc.do_thread(thread);
+  }
+
+  GenAllocRegion* rebase_gen = _gen_alloc_regions->at(gen);
+  assert(rebase_gen != NULL, "Gen alloc region should't be null.");
+  // This must be a retire because calling release would force me to do call init.
+  rebase_gen->retire(true);
+}
+
+jint G1CollectedHeap::new_alloc_gen() {
+  MutexLockerEx ml(HeapGen_lock);
+
+  int gen = _gen_alloc_regions->length();
+#if DEBUG_NEW_GEN
+    gclog_or_tty->print_cr("<underscore> [G1CollectedHeap::new_alloc_gen] creating new gen=%d", gen);
+#endif
+  GenAllocRegion*  new_gen = new GenAllocRegion(gen);
+  new_gen->init();
+  new_gen->set_gen(gen);
+  _gen_alloc_regions->push(new_gen);
+  assert(new_gen == _gen_alloc_regions->at(gen), "Last gen alloc should be the new one.");
+  return gen;
+}
+
+void G1CollectedHeap::collect_alloc_gen(jint gen) {
+  GenAllocRegion* collect_gen = NULL;
+  int nregions = 0;
+
+  {
+    MutexLockerEx ml(HeapGen_lock);
+
+    if (gen >= _gen_alloc_regions->length() || gen < 0) {
+      return;
+    }
+
+    collect_gen = _gen_alloc_regions->at(gen);
+    assert(collect_gen != NULL, "Gen alloc region shouldn't be null.");
+    nregions = collect_gen->get_n_regions();
+    collect_gen->new_epoch();
+  }
+
+  // This comes from g1_policy::need_to_start_conc_mark
+  // <underscore> TODO - find a way to merge this in that method.
+  size_t marking_initiating_used_threshold = (capacity() / 100) * InitiatingHeapOccupancyPercent;
+  size_t cur_used_bytes = non_young_capacity_bytes();
+  size_t alloc_byte_size = HeapRegion::GrainBytes * HeapWordSize;
+  if ((cur_used_bytes + alloc_byte_size) > marking_initiating_used_threshold) {
+#if DEBUG_COLLECT_GEN
+    gclog_or_tty->print_cr("<underscore> [G1CollectedHeap::collect_alloc_gen] gen=%d nregions=%d: forcing minor GC",
+            gen,
+            nregions);
+#endif
+    // No need to call rebase because a GC will already do that for all generations.
+    collect(GCCause::_collect_gen);
+  } else {
+    // This is going to rebase this gen within a safepoint.
+    VM_Rebase_Gen op(gen);
+    VMThread::execute(&op);
+#if DEBUG_COLLECT_GEN
+    gclog_or_tty->print_cr("<underscore> [G1CollectedHeap::collect_alloc_gen] gen=%d nregions=%d: rebased gen %s",
+            gen,
+            nregions,
+            op.prologue_succeeded() ? "succeeded" : "failed");
+#endif
+  }
+}
+// </underscore>

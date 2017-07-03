@@ -94,6 +94,7 @@ void VM_G1IncCollectionPause::doit() {
   assert(!_should_initiate_conc_mark ||
   ((_gc_cause == GCCause::_gc_locker && GCLockerInvokesConcurrent) ||
    (_gc_cause == GCCause::_java_lang_system_gc && ExplicitGCInvokesConcurrent) ||
+    _gc_cause == GCCause::_collect_gen || // <underscore>
     _gc_cause == GCCause::_g1_humongous_allocation),
          "only a GC locker, a System.gc() or a hum allocation induced GC should start a cycle");
 
@@ -111,7 +112,7 @@ void VM_G1IncCollectionPause::doit() {
 
   GCCauseSetter x(g1h, _gc_cause);
 // <underscore>
-  printf("Initiate Conc Mark ? %s\n", _should_initiate_conc_mark ? "T" : "F");
+//  printf("Initiate Conc Mark ? %s\n", _should_initiate_conc_mark ? "T" : "F");
 
   if (_should_initiate_conc_mark) {
     // It's safer to read old_marking_cycles_completed() here, given

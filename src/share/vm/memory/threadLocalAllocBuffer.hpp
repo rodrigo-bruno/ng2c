@@ -29,6 +29,8 @@
 #include "oops/typeArrayOop.hpp"
 #include "runtime/perfData.hpp"
 
+#include "memory/nogc.h" // <underscore>
+
 class GlobalTLABStats;
 
 // ThreadLocalAllocBuffer: a descriptor for thread-local storage used by
@@ -55,6 +57,12 @@ private:
   unsigned  _slow_allocations;
 
   AdaptiveWeightedAverage _allocation_fraction;  // fraction of eden allocated in tlabs
+
+  Thread* _my_thread;				 // the thread containing this TLAB
+
+  // <underscore>
+  HeapRegion* _my_heap_region;                        // the region containing this TLAB.
+  // <underscore>
 
   void accumulate_statistics();
   void initialize_statistics();
@@ -85,8 +93,6 @@ private:
 
   void print_stats(const char* tag);
 
-  Thread* myThread();
-
   // statistics
 
   int number_of_refills() const { return _number_of_refills; }
@@ -99,7 +105,9 @@ private:
   static GlobalTLABStats* global_stats() { return _global_stats; }
 
 public:
-  ThreadLocalAllocBuffer() : _allocation_fraction(TLABAllocationWeight) {
+  // <underscore> Added constructor receiving thread.
+  ThreadLocalAllocBuffer(Thread* my_thread) :
+    _my_thread(my_thread), _allocation_fraction(TLABAllocationWeight) {
     // do nothing.  tlabs must be inited by initialize() calls
   }
 
@@ -120,6 +128,12 @@ public:
 
   // Allocate size HeapWords. The memory is NOT initialized to zero.
   inline HeapWord* allocate(size_t size);
+
+  // <underscore> Changed scope to public (from private)
+  Thread* myThread();
+  
+  HeapRegion* myHeapRegion();
+  void setHeapRegion(HeapRegion* hp);
 
   // Reserve space at the end of TLAB
   static size_t end_reserve() {

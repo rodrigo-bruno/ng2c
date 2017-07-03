@@ -89,6 +89,14 @@ void G1AllocRegion::retire(bool fill_up) {
 
   trace("retiring");
   HeapRegion* alloc_region = _alloc_region;
+
+#if DEBUG_ALLOC_REGION
+  gclog_or_tty->print_cr("<underscore> [G1AllocRegion::retire] this=["INTPTR_FORMAT"], dummy=%s, bottom=["INTPTR_FORMAT"]",
+    this,
+    alloc_region == _dummy_region ? "true" : "false",
+    alloc_region == _dummy_region ? NULL : alloc_region->bottom());
+#endif
+
   if (alloc_region != _dummy_region) {
     // We never have to check whether the active region is empty or not,
     // and potentially free it if it is, given that it's guaranteed that
@@ -174,7 +182,8 @@ void G1AllocRegion::set(HeapRegion* alloc_region) {
 HeapRegion* G1AllocRegion::release() {
   trace("releasing");
   HeapRegion* alloc_region = _alloc_region;
-  retire(false /* fill_up */);
+  // <underscore> This was previously just false.
+  retire(alloc_region->is_gen_alloc_region() /* fill_up */);
   assert(_alloc_region == _dummy_region,
          ar_ext_msg(this, "post-condition of retire()"));
   _alloc_region = NULL;

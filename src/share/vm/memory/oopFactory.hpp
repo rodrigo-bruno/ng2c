@@ -61,11 +61,17 @@ class oopFactory: AllStatic {
   static typeArrayOop    new_tenured_charArray(int length, TRAPS);
 
   static typeArrayOop    new_typeArray(BasicType type, int length, TRAPS);
+  // <underscore> Alternative declaration (with gen argument).
+  static typeArrayOop    new_typeArray(BasicType type, int length, int gen, TRAPS);
   static typeArrayOop    new_typeArray_nozero(BasicType type, int length, TRAPS);
+  // <underscore> Alternative declaration (with gen argument).
+  static typeArrayOop    new_typeArray_nozero(BasicType type, int length, int gen, TRAPS);
   static typeArrayOop    new_metaDataArray(int length, TRAPS);
 
   // Regular object arrays
   static objArrayOop     new_objArray(Klass* klass, int length, TRAPS);
+  // <underscore> Alternative declaration (with gen argument).
+  static objArrayOop     new_objArray(Klass* klass, int length, int gen, TRAPS);
 };
 
 #endif // SHARE_VM_MEMORY_OOPFACTORY_HPP

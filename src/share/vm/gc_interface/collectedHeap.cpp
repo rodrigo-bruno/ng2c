@@ -38,6 +38,7 @@
 #include "runtime/init.hpp"
 #include "runtime/thread.inline.hpp"
 #include "services/heapDumper.hpp"
+#include "gc_implementation/g1/heapRegion.hpp"
 
 
 #ifdef ASSERT
@@ -152,7 +153,8 @@ CollectedHeap::CollectedHeap() : _n_par_threads(0)
 
   _barrier_set = NULL;
   _is_gc_active = false;
-  _total_collections = _total_full_collections = 0;
+  // <underscore> Added _total_cms
+  _total_collections = _total_full_collections = _total_cms = 0;
   _gc_cause = _gc_lastcause = GCCause::_no_gc;
   NOT_PRODUCT(_promotion_failure_alot_count = 0;)
   NOT_PRODUCT(_promotion_failure_alot_gc_number = 0;)
@@ -255,28 +257,51 @@ void CollectedHeap::check_for_valid_allocation_state() {
 
 HeapWord* CollectedHeap::allocate_from_tlab_slow(KlassHandle klass, Thread* thread, size_t size) {
 
+// <underscore>
+#if DEBUG_OBJ_ALLOC
+    gclog_or_tty->print_cr("<underscore> CollectedHeap::allocate_from_tlab_slow(alloc_gen=%d, thread=%p, size="SIZE_FORMAT") ", klass.alloc_gen(), thread, size);
+#endif
+// </undescore>
+
+    ThreadLocalAllocBuffer& tlab = klass.alloc_gen() ? thread->tlab_gen() : thread->tlab();
   // Retain tlab and allocate object in shared space if
   // the amount free in the tlab is too large to discard.
-  if (thread->tlab().free() > thread->tlab().refill_waste_limit()) {
-    thread->tlab().record_slow_allocation(size);
+  if (tlab.free() > tlab.refill_waste_limit()) {
+    tlab.record_slow_allocation(size);
     return NULL;
   }
 
   // Discard tlab and allocate a new one.
   // To minimize fragmentation, the last TLAB may be smaller than the rest.
-  size_t new_tlab_size = thread->tlab().compute_size(size);
+  size_t new_tlab_size = tlab.compute_size(size);
 
-  thread->tlab().clear_before_allocation();
+  tlab.clear_before_allocation();
 
   if (new_tlab_size == 0) {
     return NULL;
   }
 
   // Allocate a new TLAB...
-  HeapWord* obj = Universe::heap()->allocate_new_tlab(new_tlab_size);
+  // <underscore> Introduced if to distinguish tlab allocated from eden or from
+  // any other generation.
+  HeapWord* obj;
+  if (!klass.alloc_gen()) {
+      obj = Universe::heap()->allocate_new_tlab(new_tlab_size);
+  }
+  else {
+      obj = Universe::heap()->allocate_new_gen_tlab(thread->alloc_gen(), new_tlab_size);
+  }
+  // </underscore>
+
   if (obj == NULL) {
     return NULL;
   }
+
+// <underscore>
+#if DEBUG_OBJ_ALLOC
+    gclog_or_tty->print_cr("<underscore> CollectedHeap::allocate_from_tlab_slow -> tlab allocated at %p (size=%zu)", obj, new_tlab_size * HeapWordSize);
+#endif
+// </undescore>
 
   AllocTracer::send_allocation_in_new_tlab_event(klass, new_tlab_size * HeapWordSize, size * HeapWordSize);
 
@@ -293,7 +318,18 @@ HeapWord* CollectedHeap::allocate_from_tlab_slow(KlassHandle klass, Thread* thre
     Copy::fill_to_words(obj + hdr_size, new_tlab_size - hdr_size, badHeapWordVal);
 #endif // ASSERT
   }
-  thread->tlab().fill(obj, obj + size, new_tlab_size);
+  tlab.fill(obj, obj + size, new_tlab_size);
+
+  // <underscore>
+  Universe::heap()->register_tlab(&tlab);
+  // </underscore>
+  
+
+// <underscore>
+#if DEBUG_OBJ_ALLOC
+    gclog_or_tty->print_cr("<underscore> CollectedHeap::allocate_from_tlab_slow -> obj allocated at %p", obj);
+#endif
+// </undescore>
   return obj;
 }
 
@@ -478,6 +514,17 @@ HeapWord* CollectedHeap::allocate_new_tlab(size_t size) {
   return NULL;
 }
 
+// <underscore>
+HeapWord* CollectedHeap::allocate_new_gen_tlab(int gen, size_t size) {
+  guarantee(false, "thread-local allocation buffers not supported");
+  return NULL;
+}
+
+void CollectedHeap::register_tlab(ThreadLocalAllocBuffer* tlab) {
+    tlab->setHeapRegion(NULL);
+}
+// </underscore>
+
 void CollectedHeap::ensure_parsability(bool retire_tlabs) {
   // The second disjunct in the assertion below makes a concession
   // for the start-up verification done while the VM is being
@@ -500,7 +547,15 @@ void CollectedHeap::ensure_parsability(bool retire_tlabs) {
          "Attempt to fill tlabs before main thread has been added"
          " to threads list is doomed to failure!");
   for (JavaThread *thread = Threads::first(); thread; thread = thread->next()) {
-     if (use_tlab) thread->tlab().make_parsable(retire_tlabs);
+     if (use_tlab) {
+// <underscore>
+#if DEBUG_TLAB_ALLOC
+       gclog_or_tty->print_cr("<underscore> CollectedHeap::ensure_parsability : retire_tlabs=%s", retire_tlabs ? "true" : "false");
+#endif
+// </underscore>
+       thread->tlab().make_parsable(retire_tlabs);
+       thread->make_gen_tlabs_parsable(retire_tlabs); // <underscore>
+     }
 #ifdef COMPILER2
      // The deferred store barriers must all have been flushed to the
      // card-table (or other remembered set structure) before GC starts
@@ -563,6 +618,11 @@ oop CollectedHeap::Class_obj_allocate(KlassHandle klass, int size, KlassHandle r
   debug_only(check_for_valid_allocation_state());
   assert(!Universe::heap()->is_gc_active(), "Allocation during gc not allowed");
   assert(size >= 0, "int won't convert to size_t");
+  // <underscore>
+#if DEBUG_OBJ_ALLOC
+  gclog_or_tty->print_cr("<underscore> CollectedHeap::Class_obj_allocate(size="SIZE_FORMAT") ", size);
+#endif
+// </undescore>
   HeapWord* obj;
     assert(ScavengeRootsInCode > 0, "must be");
     obj = common_mem_allocate_init(real_klass, size, CHECK_NULL);

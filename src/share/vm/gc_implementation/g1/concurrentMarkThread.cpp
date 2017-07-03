@@ -93,9 +93,6 @@ void ConcurrentMarkThread::run() {
       ResourceMark rm;
       HandleMark   hm;
       
-      SvcGCMarker sgcm(SvcGCMarker::OTHER); // <underscore>
-      gclog_or_tty->print_cr("Sending GC start event (underscore)");
-      
       double cycle_start = os::elapsedVTime();
 
       // We have to ensure that we finish scanning the root regions

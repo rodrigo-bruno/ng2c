@@ -1558,7 +1558,9 @@ public:
       // We will skip any region that's currently used as an old GC
       // alloc region (we should not consider those for collection
       // before we fill them up).
-      if (_hrSorted->should_add(r) && !_g1h->is_old_gc_alloc_region(r)) {
+      if (_hrSorted->should_add(r) &&
+          !_g1h->is_old_gc_alloc_region(r) &&
+          !_g1h->is_gen_alloc_region(r)) { // <underscore> no alloc region in cset.
         _hrSorted->add_region(r);
       }
     }
@@ -1582,7 +1584,9 @@ public:
       // We will skip any region that's currently used as an old GC
       // alloc region (we should not consider those for collection
       // before we fill them up).
-      if (_cset_updater.should_add(r) && !_g1h->is_old_gc_alloc_region(r)) {
+      if (_cset_updater.should_add(r) &&
+          !_g1h->is_old_gc_alloc_region(r) &&
+          !_g1h->is_gen_alloc_region(r)) { // <underscore> no alloc region in cset.
         _cset_updater.add_region(r);
       }
     }
@@ -1672,6 +1676,11 @@ void G1CollectorPolicy::add_old_region_to_cset(HeapRegion* hr) {
   size_t rs_length = hr->rem_set()->occupied();
   _recorded_rs_lengths += rs_length;
   _old_cset_region_length += 1;
+  // <underscore> Reset the gens and epochs.
+  if (hr->epoch() != -1 || hr->gen() != -1) {
+    hr->set_epoch(-1);
+    hr->set_gen(-1);
+  }
 }
 
 // Initialize the per-collection-set information
@@ -2156,7 +2165,7 @@ void G1CollectorPolicy::finalize_cset(double target_pause_time_ms, EvacuationInf
 /* <underscore> Function introduced to select regions for migration. */
 void G1CollectorPolicy::finalize_cset_for_migration(jlong min_migration_bandwidth, EvacuationInfo& evacuation_info) {
   printf("INSIDE finalize_cset_for_migration!\n");
-  // TODO - remote target_pause_time_ms
+  // <underscore> OLD-TODO - remote target_pause_time_ms
   double target_pause_time_ms = 1000;
   double young_start_time_sec = os::elapsedTime();
 

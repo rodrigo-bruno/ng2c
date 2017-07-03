@@ -93,7 +93,8 @@ Method::Method(ConstMethod* xconst, AccessFlags access_flags, int size) {
   set_method_data(NULL);
   set_method_counters(NULL);
   set_vtable_index(Method::garbage_vtable_index);
-
+  set_alloc_anno(NULL);       // <underscore>
+  set_alloc_anno_cache(NULL); // <underscore>
   // Fix and bury in Method*
   set_interpreter_entry(NULL); // sets i2i entry and from_int
   set_adapter_entry(NULL);

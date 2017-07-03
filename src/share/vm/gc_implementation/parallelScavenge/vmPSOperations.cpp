@@ -64,7 +64,7 @@ VM_ParallelGCSystemGC::VM_ParallelGCSystemGC(unsigned int gc_count,
 
 // <underscore> this is the implementation of the operation launched inside
 // parallelScavengeHeap.cpp when a full gc is requested.
-// TODO - read!
+// <underscore> OLD-TODO - read!
 void VM_ParallelGCSystemGC::doit() {
   SvcGCMarker sgcm(SvcGCMarker::FULL);
 

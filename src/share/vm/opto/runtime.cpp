@@ -227,8 +227,13 @@ void OptoRuntime::new_store_pre_barrier(JavaThread* thread) {
 }
 
 // object allocation
-JRT_BLOCK_ENTRY(void, OptoRuntime::new_instance_C(Klass* klass, JavaThread* thread))
+// <underscore> added alloc gen
+JRT_BLOCK_ENTRY(void, OptoRuntime::new_instance_C(Klass* klass, int alloc_gen, JavaThread* thread))
   JRT_BLOCK;
+#if DEBUG_OBJ_ALLOC
+  gclog_or_tty->print_cr("OptoRuntime::new_instance_C alloc_gen=%d klass=", alloc_gen);
+#endif
+
 #ifndef PRODUCT
   SharedRuntime::_new_instance_ctr++;         // new instance requires GC
 #endif
@@ -252,7 +257,7 @@ JRT_BLOCK_ENTRY(void, OptoRuntime::new_instance_C(Klass* klass, JavaThread* thre
 
   if (klass != NULL) {
     // Scavenge and allocate an instance.
-    oop result = InstanceKlass::cast(klass)->allocate_instance(THREAD);
+    oop result = InstanceKlass::cast(klass)->allocate_instance(alloc_gen, THREAD);
     thread->set_vm_result(result);
 
     // Pass oops back through thread local storage.  Our apparent type to Java
@@ -272,8 +277,14 @@ JRT_END
 
 
 // array allocation
-JRT_BLOCK_ENTRY(void, OptoRuntime::new_array_C(Klass* array_type, int len, JavaThread *thread))
+// <underscore> added alloc gen
+JRT_BLOCK_ENTRY(void, OptoRuntime::new_array_C(Klass* array_type, int alloc_gen, int len, JavaThread *thread))
   JRT_BLOCK;
+
+#if DEBUG_OBJ_ALLOC
+  gclog_or_tty->print_cr("OptoRuntime::new_array_C alloc_gen=%d klass=", alloc_gen);
+#endif
+
 #ifndef PRODUCT
   SharedRuntime::_new_array_ctr++;            // new array requires GC
 #endif
@@ -286,13 +297,13 @@ JRT_BLOCK_ENTRY(void, OptoRuntime::new_array_C(Klass* array_type, int len, JavaT
     // The oopFactory likes to work with the element type.
     // (We could bypass the oopFactory, since it doesn't add much value.)
     BasicType elem_type = TypeArrayKlass::cast(array_type)->element_type();
-    result = oopFactory::new_typeArray(elem_type, len, THREAD);
+    result = oopFactory::new_typeArray(elem_type, len, alloc_gen, THREAD);
   } else {
     // Although the oopFactory likes to work with the elem_type,
     // the compiler prefers the array_type, since it must already have
     // that latter value in hand for the fast path.
     Klass* elem_type = ObjArrayKlass::cast(array_type)->element_klass();
-    result = oopFactory::new_objArray(elem_type, len, THREAD);
+    result = oopFactory::new_objArray(elem_type, len, alloc_gen, THREAD);
   }
 
   // Pass oops back through thread local storage.  Our apparent type to Java
@@ -310,8 +321,13 @@ JRT_BLOCK_ENTRY(void, OptoRuntime::new_array_C(Klass* array_type, int len, JavaT
 JRT_END
 
 // array allocation without zeroing
-JRT_BLOCK_ENTRY(void, OptoRuntime::new_array_nozero_C(Klass* array_type, int len, JavaThread *thread))
+JRT_BLOCK_ENTRY(void, OptoRuntime::new_array_nozero_C(Klass* array_type, int alloc_gen, int len, JavaThread *thread))
   JRT_BLOCK;
+
+#if DEBUG_OBJ_ALLOC
+  gclog_or_tty->print_cr("OptoRuntime::new_array_nozero_C alloc_gen=%d klass=", alloc_gen);
+#endif
+
 #ifndef PRODUCT
   SharedRuntime::_new_array_ctr++;            // new array requires GC
 #endif
@@ -323,7 +339,7 @@ JRT_BLOCK_ENTRY(void, OptoRuntime::new_array_nozero_C(Klass* array_type, int len
   assert(array_type->oop_is_typeArray(), "should be called only for type array");
   // The oopFactory likes to work with the element type.
   BasicType elem_type = TypeArrayKlass::cast(array_type)->element_type();
-  result = oopFactory::new_typeArray_nozero(elem_type, len, THREAD);
+  result = oopFactory::new_typeArray_nozero(elem_type, len, alloc_gen, THREAD);
 
   // Pass oops back through thread local storage.  Our apparent type to Java
   // is that we return an oop, but we can block on exit from this routine and
@@ -360,72 +376,92 @@ JRT_END
 // Note: multianewarray for one dimension is handled inline by GraphKit::new_array.
 
 // multianewarray for 2 dimensions
-JRT_ENTRY(void, OptoRuntime::multianewarray2_C(Klass* elem_type, int len1, int len2, JavaThread *thread))
+JRT_ENTRY(void, OptoRuntime::multianewarray2_C(Klass* elem_type, int alloc_gen, int len1, int len2, JavaThread *thread))
 #ifndef PRODUCT
   SharedRuntime::_multi2_ctr++;                // multianewarray for 1 dimension
 #endif
   assert(check_compiled_frame(thread), "incorrect caller");
   assert(elem_type->is_klass(), "not a class");
+
+#if DEBUG_OBJ_ALLOC
+  gclog_or_tty->print_cr("OptoRuntime::multianewarray2_C alloc_gen=%d klass=", alloc_gen);
+#endif
+
   jint dims[2];
   dims[0] = len1;
   dims[1] = len2;
-  oop obj = ArrayKlass::cast(elem_type)->multi_allocate(2, dims, THREAD);
+  oop obj = ArrayKlass::cast(elem_type)->multi_allocate(2, dims, alloc_gen, THREAD);
   deoptimize_caller_frame(thread, HAS_PENDING_EXCEPTION);
   thread->set_vm_result(obj);
 JRT_END
 
 // multianewarray for 3 dimensions
-JRT_ENTRY(void, OptoRuntime::multianewarray3_C(Klass* elem_type, int len1, int len2, int len3, JavaThread *thread))
+JRT_ENTRY(void, OptoRuntime::multianewarray3_C(Klass* elem_type, int alloc_gen, int len1, int len2, int len3, JavaThread *thread))
 #ifndef PRODUCT
   SharedRuntime::_multi3_ctr++;                // multianewarray for 1 dimension
 #endif
   assert(check_compiled_frame(thread), "incorrect caller");
   assert(elem_type->is_klass(), "not a class");
+
+#if DEBUG_OBJ_ALLOC
+  gclog_or_tty->print_cr("OptoRuntime::multianewarray3_C alloc_gen=%d klass=", alloc_gen);
+#endif
+
   jint dims[3];
   dims[0] = len1;
   dims[1] = len2;
   dims[2] = len3;
-  oop obj = ArrayKlass::cast(elem_type)->multi_allocate(3, dims, THREAD);
+  oop obj = ArrayKlass::cast(elem_type)->multi_allocate(3, dims, alloc_gen, THREAD);
   deoptimize_caller_frame(thread, HAS_PENDING_EXCEPTION);
   thread->set_vm_result(obj);
 JRT_END
 
 // multianewarray for 4 dimensions
-JRT_ENTRY(void, OptoRuntime::multianewarray4_C(Klass* elem_type, int len1, int len2, int len3, int len4, JavaThread *thread))
+JRT_ENTRY(void, OptoRuntime::multianewarray4_C(Klass* elem_type, int alloc_gen, int len1, int len2, int len3, int len4, JavaThread *thread))
 #ifndef PRODUCT
   SharedRuntime::_multi4_ctr++;                // multianewarray for 1 dimension
 #endif
   assert(check_compiled_frame(thread), "incorrect caller");
   assert(elem_type->is_klass(), "not a class");
+
+#if DEBUG_OBJ_ALLOC
+  gclog_or_tty->print_cr("OptoRuntime::multianewarray4_C alloc_gen=%d klass=", alloc_gen);
+#endif
+
   jint dims[4];
   dims[0] = len1;
   dims[1] = len2;
   dims[2] = len3;
   dims[3] = len4;
-  oop obj = ArrayKlass::cast(elem_type)->multi_allocate(4, dims, THREAD);
+  oop obj = ArrayKlass::cast(elem_type)->multi_allocate(4, dims, alloc_gen, THREAD);
   deoptimize_caller_frame(thread, HAS_PENDING_EXCEPTION);
   thread->set_vm_result(obj);
 JRT_END
 
 // multianewarray for 5 dimensions
-JRT_ENTRY(void, OptoRuntime::multianewarray5_C(Klass* elem_type, int len1, int len2, int len3, int len4, int len5, JavaThread *thread))
+JRT_ENTRY(void, OptoRuntime::multianewarray5_C(Klass* elem_type, int alloc_gen, int len1, int len2, int len3, int len4, int len5, JavaThread *thread))
 #ifndef PRODUCT
   SharedRuntime::_multi5_ctr++;                // multianewarray for 1 dimension
 #endif
   assert(check_compiled_frame(thread), "incorrect caller");
   assert(elem_type->is_klass(), "not a class");
+
+#if DEBUG_OBJ_ALLOC
+  gclog_or_tty->print_cr("OptoRuntime::multianewarray5_C alloc_gen=%d klass=", alloc_gen);
+#endif
+
   jint dims[5];
   dims[0] = len1;
   dims[1] = len2;
   dims[2] = len3;
   dims[3] = len4;
   dims[4] = len5;
-  oop obj = ArrayKlass::cast(elem_type)->multi_allocate(5, dims, THREAD);
+  oop obj = ArrayKlass::cast(elem_type)->multi_allocate(5, dims, alloc_gen, THREAD);
   deoptimize_caller_frame(thread, HAS_PENDING_EXCEPTION);
   thread->set_vm_result(obj);
 JRT_END
 
-JRT_ENTRY(void, OptoRuntime::multianewarrayN_C(Klass* elem_type, arrayOopDesc* dims, JavaThread *thread))
+JRT_ENTRY(void, OptoRuntime::multianewarrayN_C(Klass* elem_type, int alloc_gen, arrayOopDesc* dims, JavaThread *thread))
   assert(check_compiled_frame(thread), "incorrect caller");
   assert(elem_type->is_klass(), "not a class");
   assert(oop(dims)->is_typeArray(), "not an array");
@@ -445,9 +481,12 @@ JRT_END
 
 const TypeFunc *OptoRuntime::new_instance_Type() {
   // create input type (domain)
-  const Type **fields = TypeTuple::fields(1);
+  // <underscore> changed number of fields to 2
+  const Type **fields = TypeTuple::fields(2);
   fields[TypeFunc::Parms+0] = TypeInstPtr::NOTNULL; // Klass to be allocated
-  const TypeTuple *domain = TypeTuple::make(TypeFunc::Parms+1, fields);
+  fields[TypeFunc::Parms+1] = TypeInt::INT;         // <underscore> alloc gen
+  // <underscore> changed number of fields to 2
+  const TypeTuple *domain = TypeTuple::make(TypeFunc::Parms+2, fields);
 
   // create result type (range)
   fields = TypeTuple::fields(1);
@@ -476,10 +515,13 @@ const TypeFunc *OptoRuntime::athrow_Type() {
 
 const TypeFunc *OptoRuntime::new_array_Type() {
   // create input type (domain)
-  const Type **fields = TypeTuple::fields(2);
+  // <underscore> changed number of fields to 3
+  const Type **fields = TypeTuple::fields(3);
   fields[TypeFunc::Parms+0] = TypeInstPtr::NOTNULL;   // element klass
-  fields[TypeFunc::Parms+1] = TypeInt::INT;       // array size
-  const TypeTuple *domain = TypeTuple::make(TypeFunc::Parms+2, fields);
+  fields[TypeFunc::Parms+1] = TypeInt::INT;       // <underscore> alloc gen
+  fields[TypeFunc::Parms+2] = TypeInt::INT;       // array size
+  // <underscore> changed number of fields to 3
+  const TypeTuple *domain = TypeTuple::make(TypeFunc::Parms+3, fields);
 
   // create result type (range)
   fields = TypeTuple::fields(1);
@@ -492,10 +534,13 @@ const TypeFunc *OptoRuntime::new_array_Type() {
 
 const TypeFunc *OptoRuntime::multianewarray_Type(int ndim) {
   // create input type (domain)
-  const int nargs = ndim + 1;
+  // <underscore> Added one for gen (+2 instead of +1).
+  const int nargs = ndim + 2;
   const Type **fields = TypeTuple::fields(nargs);
   fields[TypeFunc::Parms+0] = TypeInstPtr::NOTNULL;   // element klass
-  for( int i = 1; i < nargs; i++ )
+  fields[TypeFunc::Parms+1] = TypeInt::INT;       // <underscore> gen
+  // <underscore> i starts with 2.
+  for( int i = 2; i < nargs; i++ )
     fields[TypeFunc::Parms + i] = TypeInt::INT;       // array size
   const TypeTuple *domain = TypeTuple::make(TypeFunc::Parms+nargs, fields);
 
@@ -525,10 +570,13 @@ const TypeFunc *OptoRuntime::multianewarray5_Type() {
 
 const TypeFunc *OptoRuntime::multianewarrayN_Type() {
   // create input type (domain)
-  const Type **fields = TypeTuple::fields(2);
+  // <underscore> Added one for gen (3 instead of 2).
+  const Type **fields = TypeTuple::fields(3);
   fields[TypeFunc::Parms+0] = TypeInstPtr::NOTNULL;   // element klass
-  fields[TypeFunc::Parms+1] = TypeInstPtr::NOTNULL;   // array of dim sizes
-  const TypeTuple *domain = TypeTuple::make(TypeFunc::Parms+2, fields);
+  fields[TypeFunc::Parms+1] = TypeInt::INT;   // <underscore> gen
+  fields[TypeFunc::Parms+2] = TypeInstPtr::NOTNULL;   // array of dim sizes
+  // <underscore> Added one for gen (3 instead of 2).
+  const TypeTuple *domain = TypeTuple::make(TypeFunc::Parms+3, fields);
 
   // create result type (range)
   fields = TypeTuple::fields(1);

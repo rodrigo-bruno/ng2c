@@ -1063,14 +1063,30 @@ bool PhaseMacroExpand::eliminate_boxing_node(CallStaticJavaNode *boxing) {
   return true;
 }
 
+// <underscore> Added alloc_gen to arguments and differentiated from the
+// alloc_gen == 0
 //---------------------------set_eden_pointers-------------------------
-void PhaseMacroExpand::set_eden_pointers(Node* &eden_top_adr, Node* &eden_end_adr) {
+void PhaseMacroExpand::set_eden_pointers(Node* ctrl, Node* mem, Node* &gen_tlab_adr, Node* &eden_top_adr, Node* &eden_end_adr, int alloc_gen) {
   if (UseTLAB) {                // Private allocation: load from TLS
     Node* thread = transform_later(new (C) ThreadLocalNode());
-    int tlab_top_offset = in_bytes(JavaThread::tlab_top_offset());
-    int tlab_end_offset = in_bytes(JavaThread::tlab_end_offset());
-    eden_top_adr = basic_plus_adr(top()/*not oop*/, thread, tlab_top_offset);
-    eden_end_adr = basic_plus_adr(top()/*not oop*/, thread, tlab_end_offset);
+    int tlab_top_offset, tlab_end_offset;
+    if(alloc_gen == 0) {
+      tlab_top_offset = in_bytes(JavaThread::tlab_top_offset());
+      tlab_end_offset = in_bytes(JavaThread::tlab_end_offset());
+      eden_top_adr = basic_plus_adr(top()/*not oop*/, thread, tlab_top_offset);
+      eden_end_adr = basic_plus_adr(top()/*not oop*/, thread, tlab_end_offset);
+    } else {
+      // New way
+      tlab_top_offset = in_bytes(ThreadLocalAllocBuffer::top_offset());
+      tlab_end_offset = in_bytes(ThreadLocalAllocBuffer::end_offset());
+
+      // Load gen tlab inside Thread
+      gen_tlab_adr = make_load(ctrl, mem, thread, in_bytes(JavaThread::gen_tlab_offset()), TypeRawPtr::BOTTOM, T_ADDRESS);
+
+      // Get the addressed taking as base pointer the gen tlab addr.
+      eden_top_adr = basic_plus_adr(top()/*not oop*/, gen_tlab_adr, tlab_top_offset);
+      eden_end_adr = basic_plus_adr(top()/*not oop*/, gen_tlab_adr, tlab_end_offset);
+    }
   } else {                      // Shared allocation: load from globals
     CollectedHeap* ch = Universe::heap();
     address top_adr = (address)ch->top_addr();
@@ -1151,6 +1167,37 @@ Node* PhaseMacroExpand::make_store(Node* ctl, Node* mem, Node* base, int offset,
 // slow-path call.
 //
 
+// <underscore> Please consider reading the following file:
+// interpreterRuntime.ccp
+// <underscore> Please consider reading the following file:
+// mercurial/jdk8/langtools/src/share/classes/com/sun/tools/classfile/ClassWritter.java
+// <underscore> Node: I assume that all bci are already cached because all code
+// is interpreted before it is compiled.
+int PhaseMacroExpand::get_alloc_gen_2(Array<u2>* aac, int bci) {
+  // First, look into cache.
+  if (aac != NULL) {
+    for (int i = 0; i < aac->length(); i++) {
+#if DEBUG_ANNO_ALLOC
+        gclog_or_tty->print_cr("<underscore> get_alloc_gen_2 aac[%d]=%d", i, aac->at(i));
+#endif
+
+      if (bci == aac->at(i)) {
+#if DEBUG_ANNO_ALLOC
+        gclog_or_tty->print_cr("<underscore> get_alloc_gen_2 got annotation from cache!");
+#endif
+        return 1;
+      }
+      // Note: I prefill the array with max_jushort.
+      if (aac->at(i) == max_jushort) {
+        // No cache entry at 'i'
+        return 0;
+      }
+    }
+  }
+  return 0;
+}
+// </underscore>
+
 void PhaseMacroExpand::expand_allocate_common(
             AllocateNode* alloc, // allocation node to be expanded
             Node* length,  // array length for an array allocation
@@ -1158,6 +1205,16 @@ void PhaseMacroExpand::expand_allocate_common(
             address slow_call_address  // Address of slow call
     )
 {
+// <underscore>
+  int bci = alloc->jvms()->bci();
+  Method* m = alloc->jvms()->method()->get_Method();
+  int alloc_gen = get_alloc_gen_2(m->alloc_anno_cache(), bci);
+#if DEBUG_C2_ALLOC
+  gclog_or_tty->print_cr("<underscore> PhaseMacroExpand::expand_allocate_common AllocateNode->JVMState(bci=%d, Method=%p) GEN=%d",
+    alloc->jvms()->bci(), alloc->jvms()->method()->get_Method(), alloc_gen);
+  alloc->jvms()->method()->print(gclog_or_tty);
+#endif
+// </underscore>
 
   Node* ctrl = alloc->in(TypeFunc::Control);
   Node* mem  = alloc->in(TypeFunc::Memory);
@@ -1194,6 +1251,10 @@ void PhaseMacroExpand::expand_allocate_common(
     initial_slow_test = NULL;
   }
 
+#if DEBUG_SLOWPATH_C2
+  always_slow = true;
+  initial_slow_test = NULL;
+#endif
 
   enum { too_big_or_final_path = 1, need_gc_path = 2 };
   Node *slow_region = NULL;
@@ -1230,8 +1291,9 @@ void PhaseMacroExpand::expand_allocate_common(
 
     Node* eden_top_adr;
     Node* eden_end_adr;
+    Node* gen_tlab_adr = NULL; // <underscore>
 
-    set_eden_pointers(eden_top_adr, eden_end_adr);
+    set_eden_pointers(ctrl, mem, gen_tlab_adr, eden_top_adr, eden_end_adr, alloc_gen);
 
     // Load Eden::end.  Loop invariant and hoisted.
     //
@@ -1306,7 +1368,7 @@ void PhaseMacroExpand::expand_allocate_common(
     // Slow-path does no I/O so just set it to the original I/O.
     result_phi_i_o->init_req(slow_result_path, i_o);
 
-    i_o = prefetch_allocation(i_o, needgc_false, contended_phi_rawmem,
+    i_o = prefetch_allocation(gen_tlab_adr, i_o, needgc_false, contended_phi_rawmem,
                               old_eden_top, new_eden_top, length);
 
     // Name successful fast-path variables
@@ -1475,9 +1537,17 @@ void PhaseMacroExpand::expand_allocate_common(
   call->init_req( TypeFunc::FramePtr, alloc->in(TypeFunc::FramePtr) );
 
   call->init_req(TypeFunc::Parms+0, klass_node);
+
   if (length != NULL) {
-    call->init_req(TypeFunc::Parms+1, length);
+    // <underscore> Added exta parameter (alloc_gen)
+    call->init_req(TypeFunc::Parms+1, intcon(alloc_gen));
+    call->init_req(TypeFunc::Parms+2, length);
   }
+  else {
+    // <underscore> Added exta parameter (alloc_gen)
+    call->init_req(TypeFunc::Parms+1, intcon(alloc_gen));
+  }
+  // </underscore>
 
   // Copy debug information and adjust JVMState information, then replace
   // allocate node with the call
@@ -1676,8 +1746,9 @@ PhaseMacroExpand::initialize_object(AllocateNode* alloc,
   return rawmem;
 }
 
+// <underscore> Added gen_tlab_adr arg.
 // Generate prefetch instructions for next allocations.
-Node* PhaseMacroExpand::prefetch_allocation(Node* i_o, Node*& needgc_false,
+Node* PhaseMacroExpand::prefetch_allocation(Node* &gen_tlab_adr, Node* i_o, Node*& needgc_false,
                                         Node*& contended_phi_rawmem,
                                         Node* old_eden_top, Node* new_eden_top,
                                         Node* length) {
@@ -1696,8 +1767,17 @@ Node* PhaseMacroExpand::prefetch_allocation(Node* i_o, Node*& needgc_false,
       Node *thread = new (C) ThreadLocalNode();
       transform_later(thread);
 
-      Node *eden_pf_adr = new (C) AddPNode( top()/*not oop*/, thread,
-                   _igvn.MakeConX(in_bytes(JavaThread::tlab_pf_top_offset())) );
+      // <underscore> Introduced an if to allow pf with gen tlabs.
+      Node *eden_pf_adr = NULL;
+      if (gen_tlab_adr != NULL) {
+        int tlab_pf_top_offset = in_bytes(ThreadLocalAllocBuffer::pf_top_offset());
+        eden_pf_adr = new (C) AddPNode( top()/*not oop*/, gen_tlab_adr,
+                   _igvn.MakeConX(tlab_pf_top_offset));
+      } else {
+        int tlab_pf_top_offset = in_bytes(JavaThread::tlab_pf_top_offset());
+        eden_pf_adr = new (C) AddPNode( top()/*not oop*/, thread,
+                   _igvn.MakeConX(tlab_pf_top_offset));
+      }
       transform_later(eden_pf_adr);
 
       Node *old_pf_wm = new (C) LoadPNode( needgc_false,
