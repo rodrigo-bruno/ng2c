@@ -1,4 +1,4 @@
-#OpenJDK 8 HotSpot with the new collector: N-Generatioal Garbage Collector (NG2C)
+# OpenJDK 8 HotSpot with the new collector: N-Generatioal Garbage Collector (NG2C)
 
 [Check our paper at ISMM'17](http://www.gsd.inesc-id.pt/~rbruno/publications/rbruno-ismm17.pdf)
 
@@ -17,16 +17,16 @@ Finally, build the OpenJDK JVM and the resulting JVM has NG2C incorporated. Reme
 ### SPEC2008jvm pauses
 
 Compress Benchmark:
-![alt text](https://github.com/paper-286/ng2c/blob/master/ng2c_resources/pauses-compress.png "")
+![alt text](https://github.com/rodrigo-bruno/ng2c/blob/master/ng2c_resources/pauses-compress.png "")
 
 Crypto Benchmark:
-![alt text](https://github.com/paper-286/ng2c/blob/master/ng2c_resources/pauses-crypto.png "")
+![alt text](https://github.com/rodrigo-bruno/ng2c/blob/master/ng2c_resources/pauses-crypto.png "")
 
 Mpegaudio Benchmark:
-![alt text](https://github.com/paper-286/ng2c/blob/master/ng2c_resources/pauses-mpegaudio.png "")
+![alt text](https://github.com/rodrigo-bruno/ng2c/blob/master/ng2c_resources/pauses-mpegaudio.png "")
 
 Scimark Benchmark:
-![alt text](https://github.com/paper-286/ng2c/blob/master/ng2c_resources/pauses-scimark.png "")
+![alt text](https://github.com/rodrigo-bruno/ng2c/blob/master/ng2c_resources/pauses-scimark.png "")
 
 XML Benchmark:
-![alt text](https://github.com/paper-286/ng2c/blob/master/ng2c_resources/pauses-xml.png "")
+![alt text](https://github.com/rodrigo-bruno/ng2c/blob/master/ng2c_resources/pauses-xml.png "")
